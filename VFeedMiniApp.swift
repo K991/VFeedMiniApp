@@ -24,6 +24,7 @@ enum AppConfig {
     static let adminURL = "https://admin.streamvi.io"
     static let yandexMessengerURL = "https://messenger.360.yandex.ru/#/"
     static let yandexAuthURL = "https://passport.yandex.ru/pwl-yandex/auth"
+    static let scheduleDownloadAPI = "https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=https://disk.yandex.ru/d/CVHoMUDLjuKCFA&path=/current.jpg"
 
     static let defaultGroupId = 158819144
     static let defaultGroupName = "StreamVi | Сервис ретрансляций | Рестрим"
@@ -74,6 +75,9 @@ struct MessageTemplate: Identifiable, Hashable {
     let text: String
 }
 
+struct YandexDiskDownloadResponse: Decodable {
+    let href: String
+}
 
 enum YandexAuthState {
     case checking
@@ -2803,7 +2807,8 @@ struct VKGroupHeader: View {
     let onBack: () -> Void
 
     @State private var showMenu = false
-
+    @State private var showSchedule = false
+    
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
@@ -2836,7 +2841,7 @@ struct VKGroupHeader: View {
         .background(Color.white)
         .confirmationDialog("Меню", isPresented: $showMenu, titleVisibility: .visible) {
             Button("Расписание") {
-                sessionStore.selectedTab = .admin
+                showSchedule = true
             }
 
             Button("Выйти из аккаунта", role: .destructive) {
@@ -2845,6 +2850,83 @@ struct VKGroupHeader: View {
 
             Button("Отмена", role: .cancel) { }
         }
+        .sheet(isPresented: $showSchedule) {
+                    ScheduleImageScreen()
+                }
+            }
+        }
+
+        struct ScheduleImageScreen: View {
+            @Environment(\.dismiss) private var dismiss
+
+            @State private var imageURL: URL?
+            @State private var isLoading = true
+            @State private var errorText: String?
+
+            var body: some View {
+                NavigationStack {
+                    ZStack {
+                        Color.white.ignoresSafeArea()
+
+                        if isLoading {
+                            ProgressView("Загружаем расписание...")
+                        } else if let imageURL {
+                            AsyncImage(url: imageURL) { phase in
+                                switch phase {
+                                case .empty:
+                                    ProgressView("Загружаем изображение...")
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        .padding()
+                                case .failure:
+                                    Text("Не удалось открыть изображение расписания")
+                                        .foregroundColor(.secondary)
+                                @unknown default:
+                                    EmptyView()
+                                }
+                            }
+                        } else {
+                            Text(errorText ?? "Не удалось получить расписание")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .navigationTitle("Расписание")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Закрыть") {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .task {
+                        await loadScheduleURL()
+                    }
+                }
+            }
+
+            private func loadScheduleURL() async {
+                guard let apiURL = URL(string: AppConfig.scheduleDownloadAPI) else {
+                    isLoading = false
+                    errorText = "Некорректный адрес расписания"
+                    return
+                }
+
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: apiURL)
+                    let response = try JSONDecoder().decode(YandexDiskDownloadResponse.self, from: data)
+                    imageURL = URL(string: response.href)
+                    if imageURL == nil {
+                        errorText = "Не удалось получить ссылку на изображение"
+                    }
+                } catch {
+                    errorText = "Не удалось загрузить расписание"
+                }
+
+                isLoading = false
     }
 }
 
