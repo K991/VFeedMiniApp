@@ -107,8 +107,28 @@ struct VKAdminGroup: Decodable {
 }
 
 struct VKGroupByIdEnvelope: Decodable {
-    let response: [VKGroupById]?
+    let response: VKGroupByIdResponse?
     let error: VKAPIError?
+}
+
+struct VKGroupByIdResponse: Decodable {
+    let items: [VKGroupById]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if let array = try? container.decode([VKGroupById].self) {
+            self.items = array
+            return
+        }
+
+        let object = try container.decode(VKGroupByIdObjectResponse.self)
+        self.items = object.groups
+    }
+}
+
+struct VKGroupByIdObjectResponse: Decodable {
+    let groups: [VKGroupById]
 }
 
 struct VKGroupById: Decodable {
@@ -186,7 +206,8 @@ enum WallMedia {
 }
 
 struct WallPost: Identifiable {
-    let id: Int
+    let id: String
+    let postId: Int
     let dateText: String
     let text: String
     let likes: Int
@@ -375,7 +396,7 @@ final class SessionStore: ObservableObject {
             let (data, _) = try await URLSession.shared.data(from: url)
             let decoded = try JSONDecoder().decode(VKGroupByIdEnvelope.self, from: data)
 
-            if let group = decoded.response?.first {
+            if let group = decoded.response?.items.first {
                 selectedGroup = ManagedGroup(
                     id: group.id,
                     name: group.name,
@@ -843,7 +864,8 @@ final class WallViewModel: ObservableObject {
 
             posts = (decoded.response?.items ?? []).map { item in
                 WallPost(
-                    id: item.id,
+                    id: "\(item.id)_\(Int(item.date))",
+                    postId: item.id,
                     dateText: formatter.string(from: Date(timeIntervalSince1970: item.date)),
                     text: item.text.isEmpty ? "Без текста" : item.text,
                     likes: item.likes?.count ?? 0,
@@ -1474,14 +1496,9 @@ struct GroupContainerScreen: View {
         Group {
             if sessionStore.selectedGroup == nil {
                 ProgressView("Открываем StreamVi...")
-                    .onAppear {
-                        sessionStore.selectedGroup = ManagedGroup(
-                            id: AppConfig.defaultGroupId,
-                            name: AppConfig.defaultGroupName,
-                            photoURLString: nil,
-                            role: "Основное сообщество",
-                            screenName: AppConfig.defaultGroupScreenName
-                        )
+                    .task {
+                                            guard sessionStore.selectedGroup == nil else { return }
+                                            await sessionStore.loadDefaultGroupIfNeeded()
                         sessionStore.selectedTab = .wall
                     }
             } else {
