@@ -2483,7 +2483,7 @@ struct YandexMessengerScreen: View {
                             .cornerRadius(14)
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 180)
+                    .padding(.bottom, 480)
                 }
                 .zIndex(1000)
             }
@@ -2772,7 +2772,7 @@ struct SettingsScreen: View {
                     .foregroundColor(.primary)
                     .padding(.top, 20)
 
-                Text("ver. 1.4")
+                Text("ver. 1.6")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
                     .padding(.top, 6)
