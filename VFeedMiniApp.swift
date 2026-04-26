@@ -151,6 +151,7 @@ struct VKWallResponse: Decodable {
 
 struct VKWallItem: Decodable {
     let id: Int
+    let owner_id: Int
     let date: Double
     let text: String
     let likes: VKCount?
@@ -873,7 +874,7 @@ final class WallViewModel: ObservableObject {
                     reposts: item.reposts?.count ?? 0,
                     views: item.views?.count ?? 0,
                     media: bestMedia(from: item.attachments),
-                    postURL: URL(string: "https://vk.com/wall-\(groupId)_\(item.id)")
+                    postURL: URL(string: "https://vk.com/wall\(item.owner_id)_\(item.id)")
                 )
             }
         } catch {
@@ -3709,4 +3710,3 @@ struct AsyncAvatar: View {
             )
     }
 }
-
