@@ -831,13 +831,16 @@ final class GroupsViewModel: ObservableObject {
 @MainActor
 final class WallViewModel: ObservableObject {
     @Published var posts: [WallPost] = []
+    @Published var searchPosts: [WallPost] = []
     @Published var isLoading = false
+    @Published var isSearching = false
     @Published var errorText: String?
 
     func load(groupId: Int, token: String) async {
         isLoading = true
         errorText = nil
         posts = []
+        searchPosts = []
 
         guard
             let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
@@ -858,12 +861,60 @@ final class WallViewModel: ObservableObject {
                 return
             }
 
+            posts = mapWallItems(decoded.response?.items ?? [])
+        } catch {
+            errorText = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+
+    func search(groupId: Int, token: String, query: String) async {
+            let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !trimmedQuery.isEmpty else {
+                searchPosts = []
+                isSearching = false
+                return
+            }
+
+            isSearching = true
+
+            guard
+                let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                let encodedQuery = trimmedQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                let url = URL(string: "https://api.vk.com/method/wall.search?owner_id=-\(groupId)&owners_only=1&count=100&query=\(encodedQuery)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
+            else {
+                errorText = "Не удалось собрать URL поиска"
+                isSearching = false
+                return
+            }
+
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                let decoded = try JSONDecoder().decode(VKWallEnvelope.self, from: data)
+
+                if let error = decoded.error {
+                    errorText = "VK error \(error.error_code): \(error.error_msg)"
+                    isSearching = false
+                    return
+                }
+
+                searchPosts = mapWallItems(decoded.response?.items ?? [])
+            } catch {
+                errorText = error.localizedDescription
+            }
+
+            isSearching = false
+        }
+
+        private func mapWallItems(_ items: [VKWallItem]) -> [WallPost] {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "ru_RU")
             formatter.dateStyle = .medium
             formatter.timeStyle = .short
 
-            posts = (decoded.response?.items ?? []).map { item in
+            return items.map { item in
                 WallPost(
                     id: "\(item.id)_\(Int(item.date))",
                     postId: item.id,
@@ -877,12 +928,7 @@ final class WallViewModel: ObservableObject {
                     postURL: URL(string: "https://vk.com/wall\(item.owner_id)_\(item.id)")
                 )
             }
-        } catch {
-            errorText = error.localizedDescription
         }
-
-        isLoading = false
-    }
 
     private func bestMedia(from attachments: [VKAttachment]?) -> WallMedia? {
         guard let attachments = attachments else { return nil }
@@ -1663,15 +1709,11 @@ struct GroupWallScreen: View {
     @State private var selectedPostForShare: WallPost?
     @State private var showShareMenu = false
     @State private var showSystemShare = false
+    @State private var searchTask: Task<Void, Never>?
 
     private var filteredPosts: [WallPost] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return vm.posts }
-
-        return vm.posts.filter { post in
-            post.text.localizedCaseInsensitiveContains(query) ||
-            post.dateText.localizedCaseInsensitiveContains(query)
-        }
+        return query.isEmpty ? vm.posts : vm.searchPosts
     }
 
     var body: some View {
@@ -1713,6 +1755,14 @@ struct GroupWallScreen: View {
                         }
                         Spacer()
                     }
+                } else if vm.isSearching {
+                                    VStack {
+                                        Spacer()
+                                        ProgressView()
+                                        Text("Ищем по всей стене...")
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                    }
                 } else if filteredPosts.isEmpty {
                     VStack {
                         Spacer()
@@ -1750,6 +1800,21 @@ struct GroupWallScreen: View {
                 await vm.load(groupId: group.id, token: token)
             }
         }
+        .onChange(of: searchText) { query in
+                    searchTask?.cancel()
+
+                    guard let token = sessionStore.session?.accessToken,
+                          let group = sessionStore.selectedGroup else { return }
+
+                    searchTask = Task {
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        guard !Task.isCancelled else { return }
+                        await vm.search(groupId: group.id, token: token, query: query)
+                    }
+                }
+                .onDisappear {
+                    searchTask?.cancel()
+                }
         .confirmationDialog(
             "Поделиться постом",
             isPresented: $showShareMenu,
