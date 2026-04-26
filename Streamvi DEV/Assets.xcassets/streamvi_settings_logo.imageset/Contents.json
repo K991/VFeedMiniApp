@@ -1,0 +1,23 @@
+{
+  "images" : [
+    {
+      "filename" : "photo_2026-04-13_01-52-42-round-corners.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    },
+    {
+      "filename" : "photo_2026-04-13_01-52-42-round-corners 1.png",
+      "idiom" : "universal",
+      "scale" : "2x"
+    },
+    {
+      "filename" : "photo_2026-04-13_01-52-42-round-corners 2.png",
+      "idiom" : "universal",
+      "scale" : "3x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
