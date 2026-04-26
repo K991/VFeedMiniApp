@@ -1726,9 +1726,6 @@ struct GroupWallScreen: View {
                 .environmentObject(sessionStore)
 
                 WallSearchBar(searchText: $searchText)
-                VKTabsHeader()
-                VKAddPostRow()
-
                 if vm.isLoading {
                     VStack {
                         Spacer()
@@ -3018,62 +3015,6 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-struct VKTabsHeader: View {
-    var body: some View {
-        HStack(spacing: 0) {
-            VKTabItem(title: "Все", selected: true)
-            VKTabItem(title: "Отложенные", selected: false)
-            VKTabItem(title: "Предложенные", selected: false)
-        }
-        .frame(height: 44)
-        .background(Color.white)
-    }
-}
-
-struct VKTabItem: View {
-    let title: String
-    let selected: Bool
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Spacer()
-
-            Text(title)
-                .font(.system(size: 15, weight: selected ? .semibold : .regular))
-                .foregroundColor(selected ? .primary : .secondary)
-
-            Rectangle()
-                .fill(selected ? Color.black : Color.clear)
-                .frame(height: 2)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-struct VKAddPostRow: View {
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Добавить запись...")
-                    .font(.system(size: 17))
-                    .foregroundColor(.secondary)
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 20)
-            .frame(height: 56)
-            .background(Color.white)
-
-            Rectangle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(height: 1)
-        }
-    }
 }
 
 struct VKBottomBar: View {
