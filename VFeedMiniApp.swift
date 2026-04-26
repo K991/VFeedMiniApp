@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 import Combine
 import WebKit
-import PhotosUI 
+import PhotosUI
 
 @main
 struct VFeedMiniApp: App {
