@@ -301,6 +301,7 @@ struct ConversationPreview: Identifiable, Equatable, Hashable {
     let subtitle: String
     let timeText: String
     let unreadCount: Int
+    let hasUnreadMarker: Bool
     let avatarURL: URL?
 }
 
@@ -925,6 +926,8 @@ final class ConversationsViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorText: String?
 
+    private var manuallyMarkedUnreadPeerIDs = Set<Int>()
+    
     func load(groupId: Int, token: String) async {
         let isFirstLoad = conversations.isEmpty
         if isFirstLoad { isLoading = true }
@@ -965,6 +968,9 @@ final class ConversationsViewModel: ObservableObject {
     }
 
     func markAsRead(groupId: Int, peerId: Int, token: String) async {
+        manuallyMarkedUnreadPeerIDs.remove(peerId)
+                applyUnreadMarkers()
+
          await performConversationAction(
              method: "messages.markAsRead",
              groupId: groupId,
@@ -975,6 +981,9 @@ final class ConversationsViewModel: ObservableObject {
      }
 
      func markAsUnread(groupId: Int, peerId: Int, token: String) async {
+         manuallyMarkedUnreadPeerIDs.insert(peerId)
+                 applyUnreadMarkers()
+
          await performConversationAction(
              method: "messages.markAsUnreadConversation",
              groupId: groupId,
@@ -1020,10 +1029,27 @@ final class ConversationsViewModel: ObservableObject {
          }
      }
 
+    
+    
+    private func applyUnreadMarkers() {
+            conversations = conversations.map { chat in
+                ConversationPreview(
+                    id: chat.id,
+                    title: chat.title,
+                    subtitle: chat.subtitle,
+                    timeText: chat.timeText,
+                    unreadCount: chat.unreadCount,
+                    hasUnreadMarker: chat.unreadCount > 0 || manuallyMarkedUnreadPeerIDs.contains(chat.id),
+                    avatarURL: chat.avatarURL
+                )
+            }
+        }
+
     private func mapConversation(item: VKConversationItem, profiles: [VKProfile], groups: [VKEntityGroup]) -> ConversationPreview {
         let peerId = item.conversation.peer.id
         let peerType = item.conversation.peer.type ?? "user"
         let unread = item.conversation.unread_count ?? 0
+        let hasUnreadMarker = unread > 0 || manuallyMarkedUnreadPeerIDs.contains(peerId)
         let text = normalized(item.last_message?.text)
         let time = formatShortDate(item.last_message?.date)
 
@@ -1034,6 +1060,7 @@ final class ConversationsViewModel: ObservableObject {
                 subtitle: text,
                 timeText: time,
                 unreadCount: unread,
+                hasUnreadMarker: hasUnreadMarker,
                 avatarURL: profile.photo_100.flatMap(URL.init(string:))
             )
         }
@@ -1045,6 +1072,7 @@ final class ConversationsViewModel: ObservableObject {
                 subtitle: text,
                 timeText: time,
                 unreadCount: unread,
+                hasUnreadMarker: hasUnreadMarker,
                 avatarURL: group.photo_100.flatMap(URL.init(string:))
             )
         }
@@ -1057,6 +1085,7 @@ final class ConversationsViewModel: ObservableObject {
                 subtitle: text,
                 timeText: time,
                 unreadCount: unread,
+                hasUnreadMarker: hasUnreadMarker,
                 avatarURL: nil
             )
         }
@@ -1067,6 +1096,7 @@ final class ConversationsViewModel: ObservableObject {
             subtitle: text,
             timeText: time,
             unreadCount: unread,
+            hasUnreadMarker: hasUnreadMarker,
             avatarURL: nil
         )
     }
@@ -1806,22 +1836,28 @@ struct ConversationsScreen: View {
                             ConversationRow(chat: chat)
                         }
                         .contextMenu {
-                                                   Button("Отметить прочитанным") {
+                            Button{
                                                        Task {
                                                            await vm.markAsRead(groupId: group.id, peerId: chat.id, token: userToken)
                                                        }
-                                                   }
+                            } label: {
+                                Label("Отметить прочитанным", systemImage: "checkmark.circle")
+                            }
 
-                                                   Button("Отметить непрочитанным") {
+                                                   Button{
                                                        Task {
                                                            await vm.markAsUnread(groupId: group.id, peerId: chat.id, token: userToken)
                                                        }
+                                                   } label: {
+                                                       Label("Отметить непрочитанным", systemImage: "circle.fill")
                                                    }
 
-                                                   Button("Отметить важным") {
+                                                   Button{
                                                        Task {
                                                            await vm.markAsImportant(groupId: group.id, peerId: chat.id, token: userToken)
                                                        }
+                                                   } label: {
+                                                                                                         Label("Отметить важным", systemImage: "star")
                                                    }
 
                                                    Button("Отмена", role: .cancel) {}
@@ -3130,6 +3166,10 @@ struct ConversationRow: View {
                             .padding(.vertical, 3)
                             .background(Color.blue)
                             .cornerRadius(10)
+                    } else if chat.hasUnreadMarker {
+                                           Circle()
+                                               .fill(Color.blue)
+                                               .frame(width: 10, height: 10)
                     }
                 }
             }
