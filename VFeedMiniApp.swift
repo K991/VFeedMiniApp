@@ -3430,7 +3430,6 @@ struct MessageBubbleRow: View {
         }
         .confirmationDialog("Действия с сообщением", isPresented: $showActions, titleVisibility: .visible) {
             Button("Ответить") {}
-            Button("Переслать") {}
             Button("Копировать текст") {
                 UIPasteboard.general.string = message.text
             }
@@ -3438,7 +3437,6 @@ struct MessageBubbleRow: View {
                 Button("Редактировать") {}
             }
             Button("Удалить", role: .destructive) {}
-            Button("Выбрать") {}
             Button("Отмена", role: .cancel) {}
         }
     }
