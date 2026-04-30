@@ -317,6 +317,7 @@ struct ChatMessage: Identifiable {
     let text: String
     let timeText: String
     let isOutgoing: Bool
+    let senderName: String
     let avatarURL: URL?
     let attachments: [MessageAttachment]
 }
@@ -1186,6 +1187,7 @@ final class ChatHistoryViewModel: ObservableObject {
                     text: normalized(item.text),
                     timeText: formatTime(item.date),
                     isOutgoing: (item.out ?? 0) == 1,
+                    senderName: senderName(fromId: fromId, profiles: profiles, groups: groups),
                     avatarURL: avatarURL,
                     attachments: parseAttachments(item.attachments)
                 )
@@ -1269,6 +1271,16 @@ final class ChatHistoryViewModel: ObservableObject {
         formatter.locale = Locale(identifier: "ru_RU")
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: Date(timeIntervalSince1970: ts))
+    }
+    
+    private func senderName(fromId: Int, profiles: [VKProfile], groups: [VKEntityGroup]) -> String {
+        if fromId > 0, let user = profiles.first(where: { $0.id == fromId }) {
+            return "\(user.first_name) \(user.last_name)"
+        }
+        if fromId < 0, let group = groups.first(where: { $0.id == abs(fromId) }) {
+            return group.name
+        }
+        return "Неизвестно"
     }
 }
 
@@ -1933,6 +1945,8 @@ struct ChatDetailScreen: View {
     @State private var fullscreenPhoto: FullscreenPhoto?
     @State private var showPhotoPicker = false
     @State private var showTemplates = false
+    @State private var pendingImage: UIImage?
+        @State private var selectedMessage: ChatMessage?
 
     private let templates: [MessageTemplate] = [
         .init(title: "Здравствуйте", text: "Здравствуйте!"),
@@ -1981,6 +1995,9 @@ struct ChatDetailScreen: View {
                                     message: message,
                                     onOpenPhoto: { url in
                                         fullscreenPhoto = FullscreenPhoto(url: url)
+                                    },
+                                                                       onOpenMessage: {
+                                                                           selectedMessage = message
                                     }
                                 )
                                 .id(message.id)
@@ -2015,14 +2032,27 @@ struct ChatDetailScreen: View {
 
             MessageInputBar(
                 text: $draftText,
+                pendingImage: $pendingImage,
                 isSending: vm.isSending,
                 isUploading: photoSender.isUploading,
                 onSend: {
                     let text = draftText
                     Task {
-                        let sent = await vm.send(text: text, groupId: groupId, peerId: chat.id, token: userToken)
+                        let sent: Bool
+                                                if let pendingImage {
+                                                    sent = await photoSender.sendPhoto(
+                                                        image: pendingImage,
+                                                        peerId: chat.id,
+                                                        token: userToken,
+                                                        groupId: groupId,
+                                                        messageText: text
+                                                    )
+                                                } else {
+                                                    sent = await vm.send(text: text, groupId: groupId, peerId: chat.id, token: userToken)
+                                                }
                         if sent {
                             draftText = ""
+                            self.pendingImage = nil
                             await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
                         }
                     }
@@ -2059,22 +2089,12 @@ struct ChatDetailScreen: View {
         }
         .sheet(isPresented: $showPhotoPicker) {
             PhotoPicker { image in
-                Task {
-                    let sent = await photoSender.sendPhoto(
-                        image: image,
-                        peerId: chat.id,
-                        token: userToken,
-                        groupId: groupId,
-                        messageText: draftText
-                    )
-
-                    if sent {
-                        draftText = ""
-                        await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
-                    }
-                }
+                pendingImage = image
             }
         }
+        .sheet(item: $selectedMessage) { message in
+                    MessageTextSelectionScreen(message: message)
+                }
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
@@ -3276,6 +3296,7 @@ struct EditableInfoRow: View {
 
 struct MessageInputBar: View {
     @Binding var text: String
+    @Binding var pendingImage: UIImage?
     let isSending: Bool
     let isUploading: Bool
     let onSend: () -> Void
@@ -3283,37 +3304,60 @@ struct MessageInputBar: View {
     let onTemplatesTap: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Button(action: onAttachTap) {
-                    Image(systemName: "paperclip")
+        VStack(spacing: 8) {
+                   if let pendingImage {
+                       HStack {
+                           Image(uiImage: pendingImage)
+                               .resizable()
+                               .scaledToFill()
+                               .frame(width: 58, height: 58)
+                               .clipShape(RoundedRectangle(cornerRadius: 10))
+                           Text("Фото прикреплено")
+                               .font(.system(size: 13))
                         .foregroundColor(.secondary)
+                           Spacer()
+                                              Button {
+                                                  self.pendingImage = nil
+                                              } label: {
+                                                  Image(systemName: "xmark.circle.fill")
+                                                      .foregroundColor(.secondary)
+                                              }
                 }
+                       .padding(.horizontal, 12)
+                                   }
 
-                TextField("Сообщение", text: $text)
-                    .textFieldStyle(.plain)
-
-                Button(action: onTemplatesTap) {
-                    Image(systemName: "list.bullet")
-                        .foregroundColor(.secondary)
+            HStack(spacing: 10) {
+                           HStack(spacing: 8) {
+                               Button(action: onAttachTap) {
+                                   Image(systemName: "paperclip")
+                                       .foregroundColor(.secondary)
+                               }
+                               TextField("Сообщение", text: $text, axis: .vertical)
+                                   .textFieldStyle(.plain)
+                                   .lineLimit(1...6)
+                               Button(action: onTemplatesTap) {
+                                   Image(systemName: "list.bullet")
+                                       .foregroundColor(.secondary)
+                               }
                 }
+                           .padding(.horizontal, 12)
+                                           .padding(.vertical, 10)
+                                           .background(Color(.systemGray6))
+                                           .cornerRadius(20)
+
+                Button(action: onSend) {
+                                   if isSending || isUploading {
+                                       ProgressView()
+                                           .frame(width: 34, height: 34)
+                                   } else {
+                                       Image(systemName: "arrow.up.circle.fill")
+                                           .font(.system(size: 30))
+                                           .foregroundColor(canSend ? .blue : .gray)
+                                   }
+                }
+                .disabled(!canSend || isSending || isUploading)
             }
-            .padding(.horizontal, 12)
-            .frame(height: 40)
-            .background(Color(.systemGray6))
-            .cornerRadius(20)
-
-            Button(action: onSend) {
-                if isSending || isUploading {
-                    ProgressView()
-                        .frame(width: 34, height: 34)
-                } else {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 30))
-                        .foregroundColor(canSend ? .blue : .gray)
-                }
-            }
-            .disabled(!canSend || isSending || isUploading)
+            
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -3321,13 +3365,15 @@ struct MessageInputBar: View {
     }
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pendingImage != nil
     }
 }
 
 struct MessageBubbleRow: View {
     let message: ChatMessage
     let onOpenPhoto: (URL) -> Void
+    let onOpenMessage: () -> Void
+        @State private var showActions = false
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -3338,6 +3384,10 @@ struct MessageBubbleRow: View {
             }
 
             VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
+                Text(message.senderName)
+                                  .font(.system(size: 12, weight: .medium))
+                                  .foregroundColor(.secondary)
+
                 VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 6) {
                     if !message.text.isEmpty {
                         Text(message.text)
@@ -3363,10 +3413,37 @@ struct MessageBubbleRow: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
+            .onTapGesture {
+                           onOpenMessage()
+                       }
 
             if !message.isOutgoing {
                 Spacer()
             }
+            
+            Button {
+                showActions = true
+            } label: {
+                Image(systemName: "ellipsis")
+                    .foregroundColor(.secondary)
+                    .frame(width: 34, height: 34)
+                    .background(Color.gray.opacity(0.12))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .confirmationDialog("Действия с сообщением", isPresented: $showActions, titleVisibility: .visible) {
+            Button("Ответить") {}
+            Button("Переслать") {}
+            Button("Копировать текст") {
+                UIPasteboard.general.string = message.text
+            }
+            if message.isOutgoing {
+                Button("Редактировать") {}
+            }
+            Button("Удалить", role: .destructive) {}
+            Button("Выбрать") {}
+            Button("Отмена", role: .cancel) {}
         }
     }
 
@@ -3439,6 +3516,32 @@ struct MessageBubbleRow: View {
         }
         let mb = kb / 1024.0
         return String(format: "%.1f МБ", mb)
+    }
+}
+
+struct MessageTextSelectionScreen: View {
+    let message: ChatMessage
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                Text(message.text.isEmpty ? "Нет текста в сообщении" : message.text)
+                    .font(.system(size: 17))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .textSelection(.enabled)
+            }
+            .navigationTitle("Сообщение")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
