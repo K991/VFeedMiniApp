@@ -244,6 +244,7 @@ struct VKConversationItem: Decodable {
 struct VKConversation: Decodable {
     let peer: VKPeer
     let unread_count: Int?
+    let important: Bool?
 }
 
 struct VKPeer: Decodable {
@@ -302,6 +303,7 @@ struct ConversationPreview: Identifiable, Equatable, Hashable {
     let timeText: String
     let unreadCount: Int
     let hasUnreadMarker: Bool
+    let isImportant: Bool
     let avatarURL: URL?
 }
 
@@ -1040,6 +1042,7 @@ final class ConversationsViewModel: ObservableObject {
                     timeText: chat.timeText,
                     unreadCount: chat.unreadCount,
                     hasUnreadMarker: chat.unreadCount > 0 || manuallyMarkedUnreadPeerIDs.contains(chat.id),
+                    isImportant: chat.isImportant,
                     avatarURL: chat.avatarURL
                 )
             }
@@ -1052,6 +1055,7 @@ final class ConversationsViewModel: ObservableObject {
         let hasUnreadMarker = unread > 0 || manuallyMarkedUnreadPeerIDs.contains(peerId)
         let text = normalized(item.last_message?.text)
         let time = formatShortDate(item.last_message?.date)
+        let isImportant = item.conversation.important ?? false
 
         if peerType == "user", let profile = profiles.first(where: { $0.id == peerId }) {
             return ConversationPreview(
@@ -1061,6 +1065,7 @@ final class ConversationsViewModel: ObservableObject {
                 timeText: time,
                 unreadCount: unread,
                 hasUnreadMarker: hasUnreadMarker,
+                isImportant: isImportant,
                 avatarURL: profile.photo_100.flatMap(URL.init(string:))
             )
         }
@@ -1073,6 +1078,7 @@ final class ConversationsViewModel: ObservableObject {
                 timeText: time,
                 unreadCount: unread,
                 hasUnreadMarker: hasUnreadMarker,
+                isImportant: isImportant,
                 avatarURL: group.photo_100.flatMap(URL.init(string:))
             )
         }
@@ -1086,6 +1092,7 @@ final class ConversationsViewModel: ObservableObject {
                 timeText: time,
                 unreadCount: unread,
                 hasUnreadMarker: hasUnreadMarker,
+                isImportant: isImportant,
                 avatarURL: nil
             )
         }
@@ -1097,6 +1104,7 @@ final class ConversationsViewModel: ObservableObject {
             timeText: time,
             unreadCount: unread,
             hasUnreadMarker: hasUnreadMarker,
+            isImportant: isImportant,
             avatarURL: nil
         )
     }
@@ -1776,6 +1784,7 @@ struct ConversationsScreen: View {
     @StateObject private var vm = ConversationsViewModel()
     @State private var path = NavigationPath()
     @State private var searchText = ""
+   @State private var filterOption: ConversationsFilterOption = .all
 
     let refreshTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
 
@@ -1784,7 +1793,8 @@ struct ConversationsScreen: View {
             VStack(spacing: 0) {
                 MessagesHeader(
                     title: group.name,
-                    searchText: $searchText
+                    searchText: $searchText,
+                                        filterOption: $filterOption
                 )
 
                 if vm.isLoading && vm.conversations.isEmpty {
@@ -1891,11 +1901,23 @@ struct ConversationsScreen: View {
 
     private var filteredConversations: [ConversationPreview] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return vm.conversations }
 
-        return vm.conversations.filter {
-            $0.title.localizedCaseInsensitiveContains(query) ||
-            $0.subtitle.localizedCaseInsensitiveContains(query)
+        return vm.conversations.filter { conversation in
+                    let matchesQuery = query.isEmpty ||
+                    conversation.title.localizedCaseInsensitiveContains(query) ||
+                    conversation.subtitle.localizedCaseInsensitiveContains(query)
+
+                    let matchesFilter: Bool
+                    switch filterOption {
+                    case .all:
+                        matchesFilter = true
+                    case .unread:
+                        matchesFilter = conversation.hasUnreadMarker
+                    case .important:
+                        matchesFilter = conversation.isImportant
+                    }
+
+                    return matchesQuery && matchesFilter
         }
     }
 }
@@ -2865,9 +2887,18 @@ struct VKGroupHeader: View {
     }
 }
 
+enum ConversationsFilterOption {
+    case all
+    case unread
+    case important
+}
+
 struct MessagesHeader: View {
     let title: String
     @Binding var searchText: String
+    @Binding var filterOption: ConversationsFilterOption
+
+       @State private var showMenu = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -2876,6 +2907,14 @@ struct MessagesHeader: View {
                     .font(.system(size: 22, weight: .bold))
 
                 Spacer()
+                
+                Button {
+                                   showMenu = true
+                               } label: {
+                                   Image(systemName: "line.3.horizontal")
+                                       .font(.system(size: 18, weight: .semibold))
+                                       .foregroundColor(.blue)
+                               }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -2916,9 +2955,23 @@ struct MessagesHeader: View {
             Divider()
         }
         .background(Color.white)
+        .confirmationDialog("Меню", isPresented: $showMenu, titleVisibility: .visible) {
+            Button("Все") {
+                           filterOption = .all
+                       }
+
+                    Button("Показать непрочитанные") {
+                        filterOption = .unread
+                    }
+
+                    Button("Показать важные") {
+                        filterOption = .important
+                    }
+
+                    Button("Отмена", role: .cancel) { }
+                }
     }
 }
-
 struct ChatHeader: View {
     let chat: ConversationPreview
     let userToken: String
