@@ -1725,25 +1725,24 @@ struct GroupWallScreen: View {
                 .onDisappear {
                     searchTask?.cancel()
                 }
-        .confirmationDialog(
-            "Поделиться постом",
-            isPresented: $showShareMenu,
-            titleVisibility: .visible
-        ) {
-            Button("Скопировать ссылку") {
-                if let url = selectedPostForShare?.postURL {
-                    UIPasteboard.general.string = url.absoluteString
-                }
-                selectedPostForShare = nil
-            }
-
-            Button("Поделиться") {
-                showSystemShare = true
-            }
-
-            Button("Отмена", role: .cancel) {
-                selectedPostForShare = nil
-            }
+                .actionSheet(isPresented: $showShareMenu) {
+                            ActionSheet(
+                                title: Text("Поделиться постом"),
+                                buttons: [
+                                    .default(Text("Скопировать ссылку")) {
+                                        if let url = selectedPostForShare?.postURL {
+                                            UIPasteboard.general.string = url.absoluteString
+                                        }
+                                        selectedPostForShare = nil
+                                    },
+                                    .default(Text("Поделиться")) {
+                                        showSystemShare = true
+                                    },
+                                    .cancel {
+                                        selectedPostForShare = nil
+                                    }
+                                ]
+                            )
         }
         .sheet(isPresented: $showSystemShare, onDismiss: {
             selectedPostForShare = nil
