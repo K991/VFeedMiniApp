@@ -3384,11 +3384,7 @@ struct MessageBubbleRow: View {
             }
 
             VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
-                Text(message.senderName)
-                                  .font(.system(size: 12, weight: .medium))
-                                  .foregroundColor(.secondary)
-
-                VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 6) {
+                                VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 6) {
                     if !message.text.isEmpty {
                         Text(message.text)
                             .font(.system(size: 15))
@@ -3409,7 +3405,7 @@ struct MessageBubbleRow: View {
                 .background(message.isOutgoing ? Color.blue : Color.white)
                 .cornerRadius(14)
 
-                Text(message.timeText)
+                Text(messageMetaText)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -3446,6 +3442,12 @@ struct MessageBubbleRow: View {
             Button("Отмена", role: .cancel) {}
         }
     }
+
+    private var messageMetaText: String {
+            let sender = message.senderName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sender.isEmpty else { return message.timeText }
+            return "\(message.timeText) (\(sender))"
+        }
 
     @ViewBuilder
     private func attachmentView(_ attachment: MessageAttachment) -> some View {
