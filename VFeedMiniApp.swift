@@ -3379,6 +3379,7 @@ struct MessageBubbleRow: View {
         HStack(alignment: .bottom, spacing: 8) {
             if message.isOutgoing {
                 Spacer()
+                messageActionsButton
             } else {
                 AsyncAvatar(url: message.avatarURL, size: 30)
             }
@@ -3414,19 +3415,9 @@ struct MessageBubbleRow: View {
                        }
 
             if !message.isOutgoing {
+                messageActionsButton
                 Spacer()
             }
-            
-            Button {
-                showActions = true
-            } label: {
-                Image(systemName: "ellipsis")
-                    .foregroundColor(.secondary)
-                    .frame(width: 34, height: 34)
-                    .background(Color.gray.opacity(0.12))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
         }
         .confirmationDialog("Действия с сообщением", isPresented: $showActions, titleVisibility: .visible) {
             Button("Ответить") {}
@@ -3443,6 +3434,19 @@ struct MessageBubbleRow: View {
 
     private var messageMetaText: String {
         message.timeText
+        }
+
+    private var messageActionsButton: some View {
+            Button {
+                showActions = true
+            } label: {
+                Image(systemName: "ellipsis")
+                    .foregroundColor(.secondary)
+                    .frame(width: 34, height: 34)
+                    .background(Color.gray.opacity(0.12))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
         }
 
     @ViewBuilder
