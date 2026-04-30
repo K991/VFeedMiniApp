@@ -3444,9 +3444,7 @@ struct MessageBubbleRow: View {
     }
 
     private var messageMetaText: String {
-            let sender = message.senderName.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !sender.isEmpty else { return message.timeText }
-            return "\(message.timeText) (\(sender))"
+        message.timeText
         }
 
     @ViewBuilder
