@@ -290,6 +290,11 @@ struct VKSendMessageEnvelope: Decodable {
     let error: VKAPIError?
 }
 
+struct VKBooleanEnvelope: Decodable {
+    let response: Int?
+    let error: VKAPIError?
+}
+
 struct ConversationPreview: Identifiable, Equatable, Hashable {
     let id: Int
     let title: String
@@ -774,63 +779,6 @@ enum VKTokenParser {
 
 // MARK: - ViewModels
 
-@MainActor
-final class GroupsViewModel: ObservableObject {
-    @Published var groups: [ManagedGroup] = []
-    @Published var isLoading = false
-    @Published var errorText: String?
-
-    func load(token: String) async {
-        isLoading = true
-        errorText = nil
-        groups = []
-
-        guard
-            let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-            let url = URL(string: "https://api.vk.com/method/groups.get?filter=admin,editor,moder&extended=1&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
-        else {
-            errorText = "Не удалось собрать URL"
-            isLoading = false
-            return
-        }
-
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let decoded = try JSONDecoder().decode(VKGroupsEnvelope.self, from: data)
-
-            if let error = decoded.error {
-                errorText = "VK error \(error.error_code): \(error.error_msg)"
-                isLoading = false
-                return
-            }
-
-            let items = decoded.response?.items ?? []
-            groups = items.map {
-                ManagedGroup(
-                    id: $0.id,
-                    name: $0.name,
-                    photoURLString: $0.photo_100,
-                    role: roleText(adminLevel: $0.admin_level, isAdmin: $0.is_admin),
-                    screenName: $0.screen_name
-                )
-            }
-        } catch {
-            errorText = error.localizedDescription
-        }
-
-        isLoading = false
-    }
-
-    private func roleText(adminLevel: Int?, isAdmin: Int?) -> String {
-        if isAdmin != 1 { return "Участник" }
-        switch adminLevel {
-        case 3: return "Администратор"
-        case 2: return "Редактор"
-        case 1: return "Модератор"
-        default: return "Управление"
-        }
-    }
-}
 
 @MainActor
 final class WallViewModel: ObservableObject {
@@ -1015,6 +963,62 @@ final class ConversationsViewModel: ObservableObject {
 
         isLoading = false
     }
+
+    func markAsRead(groupId: Int, peerId: Int, token: String) async {
+         await performConversationAction(
+             method: "messages.markAsRead",
+             groupId: groupId,
+             peerId: peerId,
+             token: token,
+             errorPrefix: "Не удалось отметить как прочитанное"
+         )
+     }
+
+     func markAsUnread(groupId: Int, peerId: Int, token: String) async {
+         await performConversationAction(
+             method: "messages.markAsUnreadConversation",
+             groupId: groupId,
+             peerId: peerId,
+             token: token,
+             errorPrefix: "Не удалось отметить как непрочитанное"
+         )
+     }
+
+     func markAsImportant(groupId: Int, peerId: Int, token: String) async {
+         await performConversationAction(
+             method: "messages.markAsImportantConversation",
+             groupId: groupId,
+             peerId: peerId,
+             token: token,
+             errorPrefix: "Не удалось отметить как важное"
+         )
+     }
+
+     private func performConversationAction(
+         method: String,
+         groupId: Int,
+         peerId: Int,
+         token: String,
+         errorPrefix: String
+     ) async {
+         guard let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+               let url = URL(string: "https://api.vk.com/method/\(method)?group_id=\(groupId)&peer_id=\(peerId)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)") else {
+             errorText = "\(errorPrefix): ошибка URL"
+             return
+         }
+
+         do {
+             let (data, _) = try await URLSession.shared.data(from: url)
+             let decoded = try JSONDecoder().decode(VKBooleanEnvelope.self, from: data)
+             if let error = decoded.error {
+                 errorText = "\(errorPrefix): VK error \(error.error_code): \(error.error_msg)"
+             } else {
+                 await load(groupId: groupId, token: token)
+             }
+         } catch {
+             errorText = "\(errorPrefix): \(error.localizedDescription)"
+         }
+     }
 
     private func mapConversation(item: VKConversationItem, profiles: [VKProfile], groups: [VKEntityGroup]) -> ConversationPreview {
         let peerId = item.conversation.peer.id
@@ -1579,131 +1583,6 @@ struct GroupContainerScreen: View {
     }
 }
 
-struct GroupsScreen: View {
-    @EnvironmentObject var sessionStore: SessionStore
-    @StateObject private var vm = GroupsViewModel()
-    @State private var didAutoOpenSavedGroup = false
-    @State private var searchText = ""
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Мои сообщества")
-                        .font(.system(size: 24, weight: .bold))
-
-                    Spacer()
-
-                    Button("Сбросить токен") {
-                        sessionStore.logout()
-                    }
-                    .foregroundColor(.red)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-
-                Divider()
-
-                if vm.isLoading {
-                    VStack {
-                        Spacer()
-                        ProgressView()
-                        Text("Загружаем группы...")
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                } else if let errorText = vm.errorText {
-                    VStack(spacing: 12) {
-                        Spacer()
-                        Text("Не удалось загрузить группы")
-                            .font(.headline)
-                        Text(errorText)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                        Button("Повторить") {
-                            Task {
-                                if let token = sessionStore.session?.accessToken {
-                                    await vm.load(token: token)
-                                    autoOpenSavedGroupIfNeeded()
-                                }
-                            }
-                        }
-                        Spacer()
-                    }
-                } else if vm.groups.isEmpty {
-                    VStack(spacing: 12) {
-                        Spacer()
-                        Text("Группы не найдены")
-                            .font(.headline)
-                        Text("Либо у токена нет прав groups, либо у аккаунта нет нужных сообществ.")
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                        Spacer()
-                    }
-                } else if filteredGroups.isEmpty {
-                    VStack(spacing: 12) {
-                        Spacer()
-                        Text("Ничего не найдено")
-                            .font(.headline)
-                        Text("Попробуй изменить запрос поиска.")
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                } else {
-                    List(filteredGroups) { group in
-                        Button {
-                            openGroup(group: group)
-                        } label: {
-                            GroupRow(group: group)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            .searchable(text: $searchText, prompt: "Поиск по группам")
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .task {
-            if let token = sessionStore.session?.accessToken {
-                await vm.load(token: token)
-                autoOpenSavedGroupIfNeeded()
-            }
-        }
-    }
-
-    private var filteredGroups: [ManagedGroup] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return vm.groups }
-
-        return vm.groups.filter { group in
-            group.name.localizedCaseInsensitiveContains(query) ||
-            group.role.localizedCaseInsensitiveContains(query) ||
-            (group.screenName?.localizedCaseInsensitiveContains(query) ?? false)
-        }
-    }
-
-    private func autoOpenSavedGroupIfNeeded() {
-        guard !didAutoOpenSavedGroup else { return }
-        didAutoOpenSavedGroup = true
-
-        guard let savedGroup = sessionStore.selectedGroup else { return }
-
-        guard let actualGroup = vm.groups.first(where: { $0.id == savedGroup.id }) else {
-            sessionStore.selectedGroup = nil
-            return
-        }
-
-        sessionStore.selectedGroup = actualGroup
-    }
-
-    private func openGroup(group: ManagedGroup) {
-        sessionStore.selectedGroup = group
-    }
-}
 
 struct GroupWallScreen: View {
     @EnvironmentObject var sessionStore: SessionStore
@@ -1926,6 +1805,27 @@ struct ConversationsScreen: View {
                         NavigationLink(value: chat) {
                             ConversationRow(chat: chat)
                         }
+                        .contextMenu {
+                                                   Button("Отметить прочитанным") {
+                                                       Task {
+                                                           await vm.markAsRead(groupId: group.id, peerId: chat.id, token: userToken)
+                                                       }
+                                                   }
+
+                                                   Button("Отметить непрочитанным") {
+                                                       Task {
+                                                           await vm.markAsUnread(groupId: group.id, peerId: chat.id, token: userToken)
+                                                       }
+                                                   }
+
+                                                   Button("Отметить важным") {
+                                                       Task {
+                                                           await vm.markAsImportant(groupId: group.id, peerId: chat.id, token: userToken)
+                                                       }
+                                                   }
+
+                                                   Button("Отмена", role: .cancel) {}
+                                               }
                     }
                     .listStyle(.plain)
                 }
