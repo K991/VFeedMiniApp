@@ -1231,6 +1231,35 @@ final class ChatHistoryViewModel: ObservableObject {
         }
     }
 
+    
+    func deleteMessage(messageId: Int, groupId: Int, token: String) async -> Bool {
+        guard
+            let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+            let url = URL(string: "https://api.vk.com/method/messages.delete?group_id=\(groupId)&delete_for_all=1&message_ids=\(messageId)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
+        else {
+            errorText = "Не удалось собрать URL удаления"
+            return false
+        }
+
+        isSending = true
+        defer { isSending = false }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let decoded = try JSONDecoder().decode(VKBooleanEnvelope.self, from: data)
+
+            if let error = decoded.error {
+                errorText = "VK error \(error.error_code): \(error.error_msg)"
+                return false
+            }
+
+            return decoded.response == 1
+        } catch {
+            errorText = error.localizedDescription
+            return false
+        }
+    }
+
     private func parseAttachments(_ attachments: [VKAttachment]?) -> [MessageAttachment] {
         guard let attachments else { return [] }
 
@@ -1998,6 +2027,18 @@ struct ChatDetailScreen: View {
                                     },
                                                                        onOpenMessage: {
                                                                            selectedMessage = message
+                                                                                                               },
+                                                                                                               onReply: { message in
+                                                                                                                   let prefix = message.senderName.isEmpty ? "" : "\(message.senderName), "
+                                                                                                                   draftText = prefix
+                                                                                                               },
+                                                                                                               onDelete: { message in
+                                                                                                                   Task {
+                                                                                                                       let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
+                                                                                                                       if deleted {
+                                                                                                                           await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
+                                                                                                                       }
+                                                                                                                   }
                                     }
                                 )
                                 .id(message.id)
@@ -3373,6 +3414,8 @@ struct MessageBubbleRow: View {
     let message: ChatMessage
     let onOpenPhoto: (URL) -> Void
     let onOpenMessage: () -> Void
+    let onReply: (ChatMessage) -> Void
+        let onDelete: (ChatMessage) -> Void
         @State private var showActions = false
 
     var body: some View {
@@ -3420,14 +3463,18 @@ struct MessageBubbleRow: View {
             }
         }
         .confirmationDialog("Действия с сообщением", isPresented: $showActions, titleVisibility: .visible) {
-            Button("Ответить") {}
+            Button("Ответить") {
+                            onReply(message)
+                        }
             Button("Копировать текст") {
                 UIPasteboard.general.string = message.text
             }
             if message.isOutgoing {
                 Button("Редактировать") {}
             }
-            Button("Удалить", role: .destructive) {}
+            Button("Удалить", role: .destructive) {
+                           onDelete(message)
+                       }
             Button("Отмена", role: .cancel) {}
         }
     }
