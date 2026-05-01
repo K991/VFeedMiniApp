@@ -284,6 +284,13 @@ struct VKMessage: Decodable {
     let from_id: Int?
     let out: Int?
     let attachments: [VKAttachment]?
+    let reply_message: VKReplyMessage?
+    }
+
+    struct VKReplyMessage: Decodable {
+        let text: String?
+        let attachments: [VKAttachment]?
+        let from_id: Int?
 }
 
 struct VKSendMessageEnvelope: Decodable {
@@ -356,6 +363,7 @@ struct ChatMessage: Identifiable {
     let senderName: String
     let avatarURL: URL?
     let attachments: [MessageAttachment]
+    let replyPreviewText: String?
 }
 
 // MARK: - User Info API
@@ -1225,7 +1233,8 @@ final class ChatHistoryViewModel: ObservableObject {
                     isOutgoing: (item.out ?? 0) == 1,
                     senderName: senderName(fromId: fromId, profiles: profiles, groups: groups),
                     avatarURL: avatarURL,
-                    attachments: parseAttachments(item.attachments)
+                    attachments: parseAttachments(item.attachments),
+                    replyPreviewText: normalizedReplyText(item.reply_message?.text, attachments: item.reply_message?.attachments)
                 )
             }
         } catch {
@@ -1234,6 +1243,17 @@ final class ChatHistoryViewModel: ObservableObject {
 
         isLoading = false
     }
+
+    private func normalizedReplyText(_ text: String?, attachments: [VKAttachment]?) -> String? {
+           let trimmed = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+           if !trimmed.isEmpty {
+               return trimmed
+           }
+           if let attachments, !attachments.isEmpty {
+               return "Вложение"
+           }
+           return nil
+       }
 
     func send(text: String, groupId: Int, peerId: Int, token: String, replyToMessageId: Int? = nil) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3451,16 +3471,16 @@ struct MessageInputBar: View {
                                    Image(systemName: "paperclip")
                                        .foregroundColor(.secondary)
                                }
-                               TextField("Сообщение", text: $text, axis: .vertical)
+                               TextField("Сообщение", text: $text)
                                    .textFieldStyle(.plain)
-                                   .lineLimit(1...6)
+                                   .lineLimit(1)
                                Button(action: onTemplatesTap) {
                                    Image(systemName: "list.bullet")
                                        .foregroundColor(.secondary)
                                }
                 }
                            .padding(.horizontal, 12)
-                                           .padding(.vertical, 10)
+                                           .padding(.vertical, 6)
                                            .background(Color(.systemGray6))
                                            .cornerRadius(20)
 
@@ -3497,6 +3517,7 @@ struct ReplyPreviewBar: View {
             Rectangle()
                 .fill(Color.blue)
                 .frame(width: 3)
+                .frame(height: 28)
                 .cornerRadius(2)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -3518,7 +3539,8 @@ struct ReplyPreviewBar: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
+        .frame(height: 44)
         .background(Color(.systemGray6))
     }
 
@@ -3551,7 +3573,11 @@ struct MessageBubbleRow: View {
             }
 
             VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
-                                VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 6) {
+                VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 6) {
+                                    if let replyPreviewText = message.replyPreviewText {
+                                        repliedMessagePreview(replyPreviewText)
+                                    }
+
                     if !message.text.isEmpty {
                         Text(message.text)
                             .font(.system(size: 15))
@@ -3688,6 +3714,24 @@ struct MessageBubbleRow: View {
         }
         let mb = kb / 1024.0
         return String(format: "%.1f МБ", mb)
+  }
+    
+    private func repliedMessagePreview(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(message.isOutgoing ? Color.white.opacity(0.85) : Color.blue)
+                .frame(width: 2, height: 22)
+                .cornerRadius(1)
+
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundColor(message.isOutgoing ? Color.white.opacity(0.9) : .secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(message.isOutgoing ? Color.white.opacity(0.15) : Color.gray.opacity(0.12))
+        .cornerRadius(8)
     }
 }
 
