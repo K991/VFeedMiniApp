@@ -292,8 +292,44 @@ struct VKSendMessageEnvelope: Decodable {
 }
 
 struct VKBooleanEnvelope: Decodable {
-    let response: Int?
+    let response: VKBooleanResponse?
     let error: VKAPIError?
+}
+
+enum VKBooleanResponse: Decodable {
+    case int(Int)
+    case dictionary([String: Int])
+
+    var isSuccessful: Bool {
+        switch self {
+        case .int(let value):
+            return value == 1
+        case .dictionary(let values):
+            return !values.isEmpty && values.values.allSatisfy { $0 == 1 }
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if let intValue = try? container.decode(Int.self) {
+            self = .int(intValue)
+            return
+        }
+
+        if let dictionaryValue = try? container.decode([String: Int].self) {
+            self = .dictionary(dictionaryValue)
+            return
+        }
+
+        throw DecodingError.typeMismatch(
+            VKBooleanResponse.self,
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Unsupported VK boolean response format"
+            )
+        )
+    }
 }
 
 struct ConversationPreview: Identifiable, Equatable, Hashable {
@@ -1246,14 +1282,41 @@ final class ChatHistoryViewModel: ObservableObject {
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            let decoded = try JSONDecoder().decode(VKBooleanEnvelope.self, from: data)
+            if let decoded = try? JSONDecoder().decode(VKBooleanEnvelope.self, from: data) {
+                         if let error = decoded.error {
+                             errorText = "VK error \(error.error_code): \(error.error_msg)"
+                             return false
+                         }
+                     }
 
-            if let error = decoded.error {
-                errorText = "VK error \(error.error_code): \(error.error_msg)"
+            let object = try JSONSerialization.jsonObject(with: data)
+                       guard let root = object as? [String: Any] else {
+                           errorText = "Неизвестный формат ответа удаления"
                 return false
             }
 
-            return decoded.response == 1
+            if let error = root["error"] as? [String: Any],
+                           let code = error["error_code"] as? Int,
+                           let message = error["error_msg"] as? String {
+                            errorText = "VK error \(code): \(message)"
+                            return false
+                        }
+
+                        if let responseInt = root["response"] as? Int {
+                            return responseInt == 1
+                        }
+
+                        if let responseDict = root["response"] as? [String: Any] {
+                            let values = responseDict.values.compactMap { value -> Bool? in
+                                if let intValue = value as? Int { return intValue == 1 }
+                                if let boolValue = value as? Bool { return boolValue }
+                                return nil
+                            }
+                            return !values.isEmpty && values.allSatisfy { $0 }
+                        }
+
+                        errorText = "Неизвестный формат ответа удаления"
+                        return false
         } catch {
             errorText = error.localizedDescription
             return false
