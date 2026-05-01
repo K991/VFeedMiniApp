@@ -2065,7 +2065,9 @@ struct ChatDetailScreen: View {
     @State private var pendingImage: UIImage?
     @State private var selectedMessage: ChatMessage?
        @State private var replyToMessage: ChatMessage?
-
+    @State private var isSearchVisible = false
+        @State private var messageSearchText = ""
+    
 
     private let templates: [MessageTemplate] = [
         .init(title: "Здравствуйте", text: "Здравствуйте!"),
@@ -2079,7 +2081,12 @@ struct ChatDetailScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ChatHeader(chat: chat, userToken: userToken)
+            ChatHeader(
+                            chat: chat,
+                            userToken: userToken,
+                            isSearchVisible: $isSearchVisible,
+                            searchText: $messageSearchText
+                        )
 
             if vm.isLoading && vm.messages.isEmpty {
                 VStack {
@@ -2107,41 +2114,56 @@ struct ChatDetailScreen: View {
                 }
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 10) {
-                            ForEach(vm.messages) { message in
-                                MessageBubbleRow(
-                                    message: message,
-                                    onOpenPhoto: { url in
-                                        fullscreenPhoto = FullscreenPhoto(url: url)
-                                    },
-                                                                       onOpenMessage: {
-                                                                           selectedMessage = message
-                                                                                                               },
-                                                                                                               onReply: { message in
-                                                                                                                   replyToMessage = message
-                                                                                                               },
-                                                                                                               onDelete: { message in
-                                                                                                                   Task {
-                                                                                                                       let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
-                                                                                                                       if deleted {
-                                                                                                                           await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
-                                                                                                                       }
-                                                                                                                   }
+                ZStack(alignment: .bottomTrailing) {
+                                        ScrollView {
+                                            LazyVStack(spacing: 10) {
+                                                ForEach(filteredMessages) { message in
+                                                    MessageBubbleRow(
+                                                        message: message,
+                                                        onOpenPhoto: { url in
+                                                            fullscreenPhoto = FullscreenPhoto(url: url)
+                                                        },
+                                                                                           onOpenMessage: {
+                                                                                               selectedMessage = message
+                                                                                                                                   },
+                                                                                                                                   onReply: { message in
+                                                                                                                                       replyToMessage = message
+                                                                                                                                   },
+                                                                                                                                   onDelete: { message in
+                                                                                                                                       Task {
+                                                                                                                                           let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
+                                                                                                                                           if deleted {
+                                                                                                                                               await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
+                                                                                                                                           }
+                                                                                                                                       }
                                     }
                                 )
                                 .id(message.id)
                             }
                         }
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 12)
-                    }
-                    .background(Color.gray.opacity(0.08))
-                    .onAppear {
-                        scrollToBottom(proxy: proxy, animated: false)
-                    }
-                    .onChange(of: vm.messages.count) { _ in
-                        scrollToBottom(proxy: proxy, animated: true)
+                                                .padding(.vertical, 12)
+                                                                            .padding(.horizontal, 12)
+                                                                        }
+                                                                        .background(Color.gray.opacity(0.08))
+                                                                        .onAppear {
+                                                                            scrollToBottom(proxy: proxy, animated: false)
+                                                                        }
+                                                                        .onChange(of: vm.messages.count) { _ in
+                                                                            scrollToBottom(proxy: proxy, animated: true)
+                                                                        }
+
+                                            if filteredMessages.count > 20 {
+                                                Button {
+                                                    scrollToBottom(proxy: proxy, animated: true)
+                                                } label: {
+                                                    Image(systemName: "arrow.down.circle.fill")
+                                                        .font(.system(size: 34))
+                                                        .foregroundColor(.blue)
+                                                        .shadow(radius: 2)
+                                                }
+                                                .padding(.trailing, 16)
+                                                .padding(.bottom, 16)
+                                            }
                     }
                 }
             }
@@ -2237,7 +2259,7 @@ struct ChatDetailScreen: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        guard let lastId = vm.messages.last?.id else { return }
+        guard let lastId = filteredMessages.last?.id else { return }
 
         DispatchQueue.main.async {
             if animated {
@@ -2246,6 +2268,27 @@ struct ChatDetailScreen: View {
                 }
             } else {
                 proxy.scrollTo(lastId, anchor: .bottom)
+            }
+        }
+    }
+   
+    private var filteredMessages: [ChatMessage] {
+        let query = messageSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return vm.messages }
+
+        return vm.messages.filter { message in
+            if message.text.localizedCaseInsensitiveContains(query) {
+                return true
+            }
+
+            return message.attachments.contains { attachment in
+                switch attachment {
+                case .photo:
+                    return false
+                case .doc(let title, let ext, _, _):
+                    return title.localizedCaseInsensitiveContains(query) ||
+                    ext.localizedCaseInsensitiveContains(query)
+                }
             }
         }
     }
@@ -3134,6 +3177,8 @@ struct MessagesHeader: View {
 struct ChatHeader: View {
     let chat: ConversationPreview
     let userToken: String
+    @Binding var isSearchVisible: Bool
+        @Binding var searchText: String
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
@@ -3152,9 +3197,46 @@ struct ChatHeader: View {
                     .lineLimit(1)
 
                 Spacer()
+                
+                Button {
+                    withAnimation {
+                        isSearchVisible.toggle()
+                        if !isSearchVisible {
+                            searchText = ""
+                        }
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.blue)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
+
+            if isSearchVisible {
+                            HStack(spacing: 8) {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundColor(.secondary)
+
+                                TextField("Поиск в диалоге", text: $searchText)
+                                    .textFieldStyle(.plain)
+
+                                if !searchText.isEmpty {
+                                    Button {
+                                        searchText = ""
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 36)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(10)
+                            .padding(.horizontal, 16)
+                        }
 
             NavigationLink {
                 ChatInfoScreen(chat: chat, userToken: userToken)
