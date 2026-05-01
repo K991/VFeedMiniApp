@@ -1235,14 +1235,16 @@ final class ChatHistoryViewModel: ObservableObject {
         isLoading = false
     }
 
-    func send(text: String, groupId: Int, peerId: Int, token: String) async -> Bool {
+    func send(text: String, groupId: Int, peerId: Int, token: String, replyToMessageId: Int? = nil) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+
+        let replyParam = replyToMessageId.map { "&reply_to=\($0)" } ?? ""
 
         guard
             let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
             let encodedMessage = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-            let url = URL(string: "https://api.vk.com/method/messages.send?group_id=\(groupId)&peer_id=\(peerId)&random_id=\(Int(Date().timeIntervalSince1970 * 1000))&message=\(encodedMessage)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
+            let url = URL(string: "https://api.vk.com/method/messages.send?group_id=\(groupId)&peer_id=\(peerId)&random_id=\(Int(Date().timeIntervalSince1970 * 1000))&message=\(encodedMessage)\(replyParam)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
         else {
             errorText = "Не удалось собрать URL отправки"
             return false
@@ -1532,7 +1534,8 @@ final class VKPhotoMessageSender: ObservableObject {
         peerId: Int,
         token: String,
         groupId: Int,
-        messageText: String = ""
+        messageText: String = "",
+                replyToMessageId: Int? = nil
     ) async -> Bool {
         isUploading = true
         errorText = nil
@@ -1547,7 +1550,8 @@ final class VKPhotoMessageSender: ObservableObject {
                 token: token,
                 text: messageText,
                 attachment: attachment,
-                groupId: groupId
+                groupId: groupId,
+                                replyToMessageId: replyToMessageId
             )
             return true
         } catch {
@@ -1654,14 +1658,15 @@ final class VKPhotoMessageSender: ObservableObject {
         }
     }
 
-    private func sendMessage(peerId: Int, token: String, text: String, attachment: String, groupId: Int) async throws {
+    private func sendMessage(peerId: Int, token: String, text: String, attachment: String, groupId: Int, replyToMessageId: Int? = nil) async throws {
         let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
         let encodedText = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let encodedAttachment = attachment.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? attachment
         let randomId = Int(Date().timeIntervalSince1970 * 1000)
+        let replyParam = replyToMessageId.map { "&reply_to=\($0)" } ?? ""
 
         let urlString =
-        "https://api.vk.com/method/messages.send?group_id=\(groupId)&peer_id=\(peerId)&random_id=\(randomId)&message=\(encodedText)&attachment=\(encodedAttachment)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)"
+        "https://api.vk.com/method/messages.send?group_id=\(groupId)&peer_id=\(peerId)&random_id=\(randomId)&message=\(encodedText)&attachment=\(encodedAttachment)\(replyParam)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)"
 
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
@@ -2038,7 +2043,9 @@ struct ChatDetailScreen: View {
     @State private var showPhotoPicker = false
     @State private var showTemplates = false
     @State private var pendingImage: UIImage?
-        @State private var selectedMessage: ChatMessage?
+    @State private var selectedMessage: ChatMessage?
+       @State private var replyToMessage: ChatMessage?
+
 
     private let templates: [MessageTemplate] = [
         .init(title: "Здравствуйте", text: "Здравствуйте!"),
@@ -2092,8 +2099,7 @@ struct ChatDetailScreen: View {
                                                                            selectedMessage = message
                                                                                                                },
                                                                                                                onReply: { message in
-                                                                                                                   let prefix = message.senderName.isEmpty ? "" : "\(message.senderName), "
-                                                                                                                   draftText = prefix
+                                                                                                                   replyToMessage = message
                                                                                                                },
                                                                                                                onDelete: { message in
                                                                                                                    Task {
@@ -2134,6 +2140,13 @@ struct ChatDetailScreen: View {
                     .padding(.top, 4)
             }
 
+            if let replyToMessage {
+                            ReplyPreviewBar(
+                                message: replyToMessage,
+                                onCancel: { self.replyToMessage = nil }
+                            )
+                        }
+
             MessageInputBar(
                 text: $draftText,
                 pendingImage: $pendingImage,
@@ -2149,14 +2162,16 @@ struct ChatDetailScreen: View {
                                                         peerId: chat.id,
                                                         token: userToken,
                                                         groupId: groupId,
-                                                        messageText: text
+                                                        messageText: text,
+                                                                                                               replyToMessageId: replyToMessage?.id
                                                     )
                                                 } else {
-                                                    sent = await vm.send(text: text, groupId: groupId, peerId: chat.id, token: userToken)
+                                                    sent = await vm.send(text: text, groupId: groupId, peerId: chat.id, token: userToken, replyToMessageId: replyToMessage?.id)
                                                 }
                         if sent {
                             draftText = ""
                             self.pendingImage = nil
+                            replyToMessage = nil
                             await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
                         }
                     }
@@ -3470,6 +3485,51 @@ struct MessageInputBar: View {
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pendingImage != nil
+    }
+}
+
+struct ReplyPreviewBar: View {
+    let message: ChatMessage
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(Color.blue)
+                .frame(width: 3)
+                .cornerRadius(2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ответ на сообщение")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.blue)
+                Text(previewText)
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(.systemGray6))
+    }
+
+    private var previewText: String {
+        if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return message.text
+        }
+        if message.attachments.isEmpty {
+            return "Пустое сообщение"
+        }
+        return "Вложение"
     }
 }
 
