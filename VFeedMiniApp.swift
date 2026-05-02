@@ -1377,7 +1377,7 @@ final class ChatHistoryViewModel: ObservableObject {
                     errorText = "VK error \(error.error_code): \(error.error_msg)"
                     return false
                 }
-                return decoded.response == 1
+                return decoded.response?.isSuccessful == true
             } catch {
                 errorText = error.localizedDescription
                 return false
