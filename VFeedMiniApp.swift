@@ -1013,7 +1013,9 @@ final class ConversationsViewModel: ObservableObject {
                 allConversationItems = []
                 profilesById = [:]
                 groupsById = [:]
-                conversations = []
+                if showLoading {
+                                    conversations = []
+                                }
                 currentOffset = 0
                 hasMore = true
             }
