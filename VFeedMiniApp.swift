@@ -2151,7 +2151,7 @@ struct ChatDetailScreen: View {
                                                                                        .padding(.horizontal, 12)
                                                                                    }
                                                                                    .background(Color.gray.opacity(0.08))
-                                                                                   .defaultScrollAnchor(.bottom)
+                                                                                   .defaultScrollAnchorIfAvailable(.bottom)
                                                                                    .onAppear {
                                                                                        scrollToBottom(proxy: proxy, animated: false)
                                                                                    }
@@ -2308,6 +2308,17 @@ struct ChatDetailScreen: View {
                     ext.localizedCaseInsensitiveContains(query)
                 }
             }
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func defaultScrollAnchorIfAvailable(_ anchor: UnitPoint) -> some View {
+        if #available(iOS 17.0, *) {
+            self.defaultScrollAnchor(anchor)
+        } else {
+            self
         }
     }
 }
