@@ -860,7 +860,7 @@ final class WallViewModel: ObservableObject {
             let url = URL(string: "https://api.vk.com/method/wall.get?owner_id=-\(groupId)&count=20&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
         else {
             errorText = "Не удалось собрать URL стены"
-            if showLoading { isLoading = false }
+            isLoading = false
             return
         }
 
@@ -1018,7 +1018,7 @@ final class ConversationsViewModel: ObservableObject {
 
         guard let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             errorText = "Не удалось собрать URL диалогов"
-            if showLoading { isLoading = false }
+            isLoading = false
             return
         }
 
