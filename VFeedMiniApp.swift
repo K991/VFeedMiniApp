@@ -860,7 +860,7 @@ final class WallViewModel: ObservableObject {
             let url = URL(string: "https://api.vk.com/method/wall.get?owner_id=-\(groupId)&count=20&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
         else {
             errorText = "Не удалось собрать URL стены"
-            isLoading = false
+            if showLoading { isLoading = false }
             return
         }
 
@@ -997,7 +997,7 @@ final class ConversationsViewModel: ObservableObject {
         private var encodedToken: String?
         private var currentGroupId: Int?
     
-    func load(groupId: Int, token: String, reset: Bool = false) async {
+    func load(groupId: Int, token: String, reset: Bool = false, showLoading: Bool = true) async {
             let shouldReset = reset || groupId != currentGroupId
             if shouldReset {
                 allConversationItems = []
@@ -1011,12 +1011,14 @@ final class ConversationsViewModel: ObservableObject {
             if isLoadingMore || !hasMore { return }
 
         let isFirstLoad = conversations.isEmpty
-        if isFirstLoad { isLoading = true } else { isLoadingMore = true }
+        if showLoading {
+                    if isFirstLoad { isLoading = true } else { isLoadingMore = true }
+                }
         errorText = nil
 
         guard let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             errorText = "Не удалось собрать URL диалогов"
-            isLoading = false
+            if showLoading { isLoading = false }
             return
         }
 
@@ -1025,8 +1027,10 @@ final class ConversationsViewModel: ObservableObject {
                         self.encodedToken = encodedToken
                         guard let url = URL(string: "https://api.vk.com/method/messages.getConversations?group_id=\(groupId)&count=\(pageSize)&offset=\(currentOffset)&extended=1&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)") else {
                             errorText = "Не удалось собрать URL диалогов"
-                            isLoading = false
-                            isLoadingMore = false
+                            if showLoading {
+                                                            isLoading = false
+                                                            isLoadingMore = false
+                                                        }
                             return
                         }
 
@@ -1035,8 +1039,10 @@ final class ConversationsViewModel: ObservableObject {
 
             if let error = decoded.error {
                             errorText = "VK error \(error.error_code): \(error.error_msg)"
-                            isLoading = false
-                            isLoadingMore = false
+                if showLoading {
+                                                isLoading = false
+                                                isLoadingMore = false
+                                            }
                             return
                         }
 
@@ -1069,8 +1075,10 @@ final class ConversationsViewModel: ObservableObject {
             }
         }
 
-        isLoading = false
-        isLoadingMore = false
+        if showLoading {
+                    isLoading = false
+                    isLoadingMore = false
+                }
             }
 
             func searchConversationIDsByMessage(groupId: Int, token: String, query: String) async -> Set<Int> {
@@ -2163,7 +2171,7 @@ struct ConversationsScreen: View {
             }
         }
         .task {
-            await vm.load(groupId: group.id, token: userToken, reset: true)
+            await vm.load(groupId: group.id, token: userToken)
         }
         .onChange(of: searchText) { newValue in
             let query = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2177,7 +2185,7 @@ struct ConversationsScreen: View {
                             }
                             .onReceive(refreshTimer) { _ in
                                 Task {
-                                    await vm.load(groupId: group.id, token: userToken, reset: true)
+                                    await vm.load(groupId: group.id, token: userToken, showLoading: false)
             }
         }
     }
