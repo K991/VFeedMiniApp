@@ -2116,64 +2116,66 @@ struct ChatDetailScreen: View {
                 }
             } else {
                 ScrollViewReader { proxy in
-                ZStack(alignment: .bottomTrailing) {
-                                        ScrollView {
-                                            LazyVStack(spacing: 10) {
-                                                ForEach(filteredMessages) { message in
-                                                    MessageBubbleRow(
-                                                        message: message,
-                                                        onOpenPhoto: { url in
-                                                            fullscreenPhoto = FullscreenPhoto(url: url)
-                                                        },
-                                                        onOpenMessage: {
-                                                            selectedMessage = message
-                                                        },
-                                                        onReply: { message in
-                                                            replyToMessage = message
-                                                        },
-                                                        onDelete: { message in
-                                                            Task {
-                                                                let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
-                                                                if deleted {
-                                                                    await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
-                                                                }
-                                                            }
-                                                        }
-                                                    )
-                                                    .id(message.id)
+                    ZStack(alignment: .bottomTrailing) {
+                                            ScrollView {
+                                                LazyVStack(spacing: 10) {
+                                                    ForEach(filteredMessages) { message in
+                                                        MessageBubbleRow(
+                                                            message: message,
+                                                            onOpenPhoto: { url in
+                                                                fullscreenPhoto = FullscreenPhoto(url: url)
+                                                            },
+                                                            onOpenMessage: {
+                                                                selectedMessage = message
+                                                            },
+                                                            onReply: { message in
+                                                                replyToMessage = message
+                                                            },
+                                                            onDelete: { message in
+                                                                Task {
+                                                                    let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
+                                                                    if deleted {
+                                                                        await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
                                                 }
-                                                    Color.clear
-                                                                                                       .frame(height: 1)
-                                                                                                       .id(bottomAnchorId)
-                            }
-                                                .padding(.vertical, 12)
-                                                                            .padding(.horizontal, 12)
-                                                                        }
-                                                                        .background(Color.gray.opacity(0.08))
-                                                                        .defaultScrollAnchor(.bottom)
-                                                                        .onAppear {
-                                                                            scrollToBottom(proxy: proxy, animated: false)
-                                                                        }
-                                                                        .onChange(of: vm.messages.count) { _ in
-                                                                            scrollToBottom(proxy: proxy, animated: true)
-                                                                                .onChange(of: vm.isLoading) { isLoading in
-                                                                                                                                                           if !isLoading {
-                                                                                                                                                               scrollToBottom(proxy: proxy, animated: false)
-                                                                                                                                                           }
-                                                                                                                                                       }
-
-                                            if filteredMessages.count > 20 && !isAtBottom{
-                                                Button {
-                                                    scrollToBottom(proxy: proxy, animated: true)
-                                                } label: {
-                                                    Image(systemName: "arrow.down.circle.fill")
-                                                        .font(.system(size: 34))
-                                                        .foregroundColor(.blue)
-                                                        .shadow(radius: 2)
-                                                }
-                                                .padding(.trailing, 16)
-                                                .padding(.bottom, 16)
                                             }
+                                                            }
+                                                                                               )
+                                                                                               .id(message.id)
+                                                                                           }
+
+                                                                                           Color.clear
+                                                                                               .frame(height: 1)
+                                                                                               .id(bottomAnchorId)
+                                                                                       }
+                                                                                       .padding(.vertical, 12)
+                                                                                       .padding(.horizontal, 12)
+                                                                                   }
+                                                                                   .background(Color.gray.opacity(0.08))
+                                                                                   .defaultScrollAnchor(.bottom)
+                                                                                   .onAppear {
+                                                                                       scrollToBottom(proxy: proxy, animated: false)
+                                                                                   }
+                                                                                   .onChange(of: vm.messages.count) { _ in
+                                                                                       scrollToBottom(proxy: proxy, animated: true)
+                                                                                   }
+                                                                                   .onChange(of: vm.isLoading) { isLoading in
+                                                                                       if !isLoading {
+                                                                                           scrollToBottom(proxy: proxy, animated: false)
+                                                                                       }
+                                                                                   }
+
+                                                                                   if filteredMessages.count > 20 && !isAtBottom {
+                                                                                       Button {
+                                                                                           scrollToBottom(proxy: proxy, animated: true)
+                                                                                       } label: {
+                                                                                           Image(systemName: "arrow.down.circle.fill")
+                                                                                               .font(.system(size: 34))
+                                                                                               .foregroundColor(.blue)
+                                                                                               .shadow(radius: 2)
+                                                                                       }
+                                                                                       .padding(.trailing, 16)
+                                                                                       .padding(.bottom, 16)
+                                                                                   }
                     }
                 }
             }
