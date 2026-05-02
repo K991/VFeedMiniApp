@@ -278,7 +278,8 @@ struct VKHistoryResponse: Decodable {
 }
 
 struct VKMessage: Decodable {
-    let id: Int
+    let id: Int?
+    let conversation_message_id: Int?
     let date: Double
     let text: String?
     let from_id: Int?
@@ -1192,46 +1193,33 @@ final class ChatHistoryViewModel: ObservableObject {
         isLoading = true
         errorText = nil
 
-        guard
-            let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-            let url = URL(string: "https://api.vk.com/method/messages.getHistory?group_id=\(groupId)&peer_id=\(peerId)&count=50&extended=1&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
-        else {
-            errorText = "Не удалось собрать URL истории"
-            isLoading = false
-            return
-        }
-
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let decoded = try JSONDecoder().decode(VKHistoryEnvelope.self, from: data)
+            let primary = try await fetchHistory(groupId: groupId, peerId: peerId, token: token, includeGroupId: true)
+                      let fallback = primary.items.isEmpty
+                          ? try await fetchHistory(groupId: groupId, peerId: peerId, token: token, includeGroupId: false)
+                          : nil
 
-            if let error = decoded.error {
-                errorText = "VK error \(error.error_code): \(error.error_msg)"
-                isLoading = false
-                return
-            }
+            let history = fallback ?? primary
 
-            let profiles = decoded.response?.profiles ?? []
-            let groups = decoded.response?.groups ?? []
-            let raw = decoded.response?.items ?? []
-
-            messages = raw.reversed().map { item in
+            messages = history.items.reversed().map { item in
                 let fromId = item.from_id ?? 0
 
                 let avatarURL: URL? = {
                     if fromId > 0 {
-                        return profiles.first(where: { $0.id == fromId })?.photo_100.flatMap(URL.init(string:))
+                        return history.first(where: { $0.id == fromId })?.photo_100.flatMap(URL.init(string:))
                     } else {
-                        return groups.first(where: { $0.id == abs(fromId) })?.photo_100.flatMap(URL.init(string:))
+                        return history.first(where: { $0.id == abs(fromId) })?.photo_100.flatMap(URL.init(string:))
                     }
                 }()
 
+                let messageId = item.id ?? item.conversation_message_id ?? Int(item.date * 1000)
+                
                 return ChatMessage(
-                    id: item.id,
+                    id: messageId,
                     text: normalized(item.text),
                     timeText: formatTime(item.date),
                     isOutgoing: (item.out ?? 0) == 1,
-                    senderName: senderName(fromId: fromId, profiles: profiles, groups: groups),
+                    senderName: senderName(fromId: fromId, profiles: history.profiles, groups: history.groups),
                     avatarURL: avatarURL,
                     attachments: parseAttachments(item.attachments),
                     replyPreviewText: normalizedReplyText(item.reply_message?.text, attachments: item.reply_message?.attachments)
@@ -1243,6 +1231,39 @@ final class ChatHistoryViewModel: ObservableObject {
 
         isLoading = false
     }
+
+    private func fetchHistory(groupId: Int, peerId: Int, token: String, includeGroupId: Bool) async throws -> (items: [VKMessage], profiles: [VKProfile], groups: [VKEntityGroup]) {
+
+            var components = URLComponents(string: "https://api.vk.com/method/messages.getHistory")
+            components?.queryItems = [
+                URLQueryItem(name: "peer_id", value: String(peerId)),
+                URLQueryItem(name: "count", value: "50"),
+                URLQueryItem(name: "extended", value: "1"),
+                URLQueryItem(name: "access_token", value: token),
+                URLQueryItem(name: "v", value: AppConfig.apiVersion)
+            ]
+
+            if includeGroupId {
+                components?.queryItems?.append(URLQueryItem(name: "group_id", value: String(groupId)))
+            }
+
+            guard let url = components?.url else {
+                throw URLError(.badURL)
+            }
+
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let decoded = try JSONDecoder().decode(VKHistoryEnvelope.self, from: data)
+
+            if let error = decoded.error {
+                throw NSError(domain: "VK", code: error.error_code, userInfo: [NSLocalizedDescriptionKey: "VK error \(error.error_code): \(error.error_msg)"])
+            }
+
+            return (
+                items: decoded.response?.items ?? [],
+                profiles: decoded.response?.profiles ?? [],
+                groups: decoded.response?.groups ?? []
+            )
+        }
 
     private func normalizedReplyText(_ text: String?, attachments: [VKAttachment]?) -> String? {
            let trimmed = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2118,6 +2139,19 @@ struct ChatDetailScreen: View {
                 ScrollViewReader { proxy in
                     ZStack(alignment: .bottomTrailing) {
                                             ScrollView {
+                                                if filteredMessages.isEmpty {
+                                                                                                    VStack(spacing: 10) {
+                                                                                                        Spacer(minLength: 60)
+                                                                                                        Text("Сообщений пока нет")
+                                                                                                            .font(.system(size: 16, weight: .semibold))
+                                                                                                        Text("Откройте другой диалог или отправьте первое сообщение")
+                                                                                                            .font(.system(size: 13))
+                                                                                                            .foregroundColor(.secondary)
+                                                                                                            .multilineTextAlignment(.center)
+                                                                                                    }
+                                                                                                    .frame(maxWidth: .infinity)
+                                                                                                }
+
                                                 LazyVStack(spacing: 10) {
                                                     ForEach(filteredMessages) { message in
                                                         MessageBubbleRow(
@@ -2291,6 +2325,8 @@ struct ChatDetailScreen: View {
     }
    
     private var filteredMessages: [ChatMessage] {
+        guard isSearchVisible else { return vm.messages }
+
         let query = messageSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return vm.messages }
 
