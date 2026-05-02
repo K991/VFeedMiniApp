@@ -2093,17 +2093,31 @@ struct ChatDetailScreen: View {
     @State private var selectedMessage: ChatMessage?
        @State private var replyToMessage: ChatMessage?
     @State private var isSearchVisible = false
+    @State private var didAutoScrollOnOpen = false
         @State private var messageSearchText = ""
     @State private var isAtBottom = true
     private let bottomAnchorId = "chat-bottom-anchor"
     
-
     private let templates: [MessageTemplate] = [
-        .init(title: "Здравствуйте", text: "Здравствуйте!"),
-        .init(title: "Спасибо", text: "Спасибо!"),
-        .init(title: "Сейчас проверю", text: "Сейчас всё проверю и вернусь с ответом."),
-        .init(title: "Отправьте детали", text: "Пожалуйста, отправьте детали сообщением."),
-        .init(title: "Добрый день", text: "Добрый день!")
+        .init(title: "Профиль", text: "Здравствуйте. Напишите, пожалуйста, ID вашего проекта на сайте streamvi.io
+              Например: ⁣⁣⁣⁣⁣https://hi.streamvi.io/profile_id.jpg"),
+        .init(title: "Трансляция", text: "Отправьте, пожалуйста, id трансляции мы посмотрим подробнее по логам причину"),
+        .init(title: "Для текущей службы", text: "Здравствуйте. Такие проблемы появились в новых версиях OBS, примерно с июня 2024. Они связаны с несовместимостью некоторых плагинов. Попробуйте обновить на последнюю версию, возможно, проблемы уже исправили. Либо откатить на эту версию: https://github.com/obsproject/obs-studio/releases/tag/30.1.2"),
+        .init(title: "Разрывы", text: "Здравствуйте. Вот видео для понимания проблем
+              https://vk.com/wall-158819144_4380"),
+        .init(title: "ЭДО", text: "Отправьте приглашение по следующим реквизитам: 
+              
+              ИП Лаптев Максим Константинович ИНН 434584681694
+              (роуминг со СБИС)
+              ID в ЭДО: 2BE52c29e5471f24834b5cbbc4cca9398b1
+               
+              Если приглашение не получается отправить, оформите заявку на подключение роуминга у своего оператора ЭДО. В большинстве сервисов такая возможность присутствует:
+              - СБИС
+              - Диадок.Контур
+              - Калуга Астрал
+
+               
+              И отправьте, пожалуйста, еще сюда, остальные реквизиты компании, т.е. р/сч, бик и т.д.")
     ]
 
     let refreshTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
@@ -2193,15 +2207,9 @@ struct ChatDetailScreen: View {
                                                                                    .background(Color.gray.opacity(0.08))
                                                                                    .defaultScrollAnchorIfAvailable(.bottom)
                                                                                    .onAppear {
+                                                                                       guard !didAutoScrollOnOpen else { return }
+                                                                                         didAutoScrollOnOpen = true
                                                                                        scrollToBottom(proxy: proxy, animated: false)
-                                                                                   }
-                                                                                   .onChange(of: vm.messages.count) { _ in
-                                                                                       scrollToBottom(proxy: proxy, animated: true)
-                                                                                   }
-                                                                                   .onChange(of: vm.isLoading) { isLoading in
-                                                                                       if !isLoading {
-                                                                                           scrollToBottom(proxy: proxy, animated: false)
-                                                                                       }
                                                                                    }
 
                                                                                    if filteredMessages.count > 20 && !isAtBottom {
