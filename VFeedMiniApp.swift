@@ -2051,7 +2051,9 @@ struct ConversationsScreen: View {
     @State private var path = NavigationPath()
     @State private var searchText = ""
     @State private var filterOption: ConversationsFilterOption = .all
-        @State private var serverSearchPeerIDs: Set<Int> = []
+    @State private var serverSearchPeerIDs: Set<Int> = []
+
+        private let refreshTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -2164,13 +2166,18 @@ struct ConversationsScreen: View {
             await vm.load(groupId: group.id, token: userToken, reset: true)
         }
         .onChange(of: searchText) { newValue in
-                    let query = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let query = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
             Task {
                 if query.isEmpty {
-                                    serverSearchPeerIDs = []
-                                } else {
-                                    serverSearchPeerIDs = await vm.searchConversationIDsByMessage(groupId: group.id, token: userToken, query: query)
+                    serverSearchPeerIDs = []
+                                    } else {
+                                        serverSearchPeerIDs = await vm.searchConversationIDsByMessage(groupId: group.id, token: userToken, query: query)
+                                    }
                                 }
+                            }
+                            .onReceive(refreshTimer) { _ in
+                                Task {
+                                    await vm.load(groupId: group.id, token: userToken, reset: true)
             }
         }
     }
