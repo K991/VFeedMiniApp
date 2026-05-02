@@ -1206,9 +1206,15 @@ final class ChatHistoryViewModel: ObservableObject {
 
                 let avatarURL: URL? = {
                     if fromId > 0 {
-                        return history.first(where: { $0.id == fromId })?.photo_100.flatMap(URL.init(string:))
+                        return history.profiles
+                                                    .first(where: { $0.id == fromId })?
+                                                    .photo_100
+                                                    .flatMap(URL.init(string:))
                     } else {
-                        return history.first(where: { $0.id == abs(fromId) })?.photo_100.flatMap(URL.init(string:))
+                        return history.groups
+                                                    .first(where: { $0.id == abs(fromId) })?
+                                                    .photo_100
+                                                    .flatMap(URL.init(string:))
                     }
                 }()
 
