@@ -2067,6 +2067,7 @@ struct ChatDetailScreen: View {
        @State private var replyToMessage: ChatMessage?
     @State private var isSearchVisible = false
         @State private var messageSearchText = ""
+    @State private var isAtBottom = true
     
 
     private let templates: [MessageTemplate] = [
@@ -2123,24 +2124,25 @@ struct ChatDetailScreen: View {
                                                         onOpenPhoto: { url in
                                                             fullscreenPhoto = FullscreenPhoto(url: url)
                                                         },
-                                                                                           onOpenMessage: {
-                                                                                               selectedMessage = message
-                                                                                                                                   },
-                                                                                                                                   onReply: { message in
-                                                                                                                                       replyToMessage = message
-                                                                                                                                   },
-                                                                                                                                   onDelete: { message in
-                                                                                                                                       Task {
-                                                                                                                                           let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
-                                                                                                                                           if deleted {
-                                                                                                                                               await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
-                                                                                                                                           }
-                                                                                                                                       }
-                                    }
-                                )
-                                .id(message.id)
+                                                        onOpenMessage: {
+                                                            selectedMessage = message
+                                                        },
+                                                        onReply: { message in
+                                                            replyToMessage = message
+                                                        },
+                                                        onDelete: { message in
+                                                            Task {
+                                                                let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
+                                                                if deleted {
+                                                                    await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
+                                                                }
+                                                            }
+                                                        }
+                                                    )
+                                                    .id(message.id)
+                                                }
+                                                                   
                             }
-                        }
                                                 .padding(.vertical, 12)
                                                                             .padding(.horizontal, 12)
                                                                         }
@@ -2152,7 +2154,7 @@ struct ChatDetailScreen: View {
                                                                             scrollToBottom(proxy: proxy, animated: true)
                                                                         }
 
-                                            if filteredMessages.count > 20 {
+                                            if filteredMessages.count > 20 && !isAtBottom{
                                                 Button {
                                                     scrollToBottom(proxy: proxy, animated: true)
                                                 } label: {
