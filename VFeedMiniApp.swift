@@ -2109,12 +2109,7 @@ struct ConversationsScreen: View {
                         Spacer()
                     }
                 } else if vm.conversations.isEmpty {
-                    VStack {
-                        Spacer()
-                        Text("Диалогов нет")
-                            .font(.headline)
-                        Spacer()
-                    }
+                    Spacer()
                 } else if filteredConversations.isEmpty {
                     VStack(spacing: 12) {
                         Spacer()
