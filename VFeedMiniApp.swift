@@ -231,6 +231,7 @@ struct VKConversationsEnvelope: Decodable {
 }
 
 struct VKConversationsResponse: Decodable {
+    let count: Int?
     let items: [VKConversationItem]
     let profiles: [VKProfile]?
     let groups: [VKEntityGroup]?
@@ -981,29 +982,66 @@ final class ConversationsViewModel: ObservableObject {
         if isFirstLoad { isLoading = true }
         errorText = nil
 
-        guard
-            let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-            let url = URL(string: "https://api.vk.com/method/messages.getConversations?group_id=\(groupId)&count=50&extended=1&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
-        else {
+        guard let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             errorText = "Не удалось собрать URL диалогов"
             isLoading = false
             return
         }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let decoded = try JSONDecoder().decode(VKConversationsEnvelope.self, from: data)
+            let pageSize = 200
+                        var offset = 0
+                        var loadedAllConversations: [VKConversationItem] = []
+                        var loadedProfilesById: [Int: VKProfile] = [:]
+                        var loadedGroupsById: [Int: VKEntityGroup] = [:]
+                        var hasMore = true
+                        var totalCount: Int?
 
-            if let error = decoded.error {
-                errorText = "VK error \(error.error_code): \(error.error_msg)"
-                isLoading = false
-                return
+                        while hasMore {
+                            guard let url = URL(string: "https://api.vk.com/method/messages.getConversations?group_id=\(groupId)&count=\(pageSize)&offset=\(offset)&extended=1&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)") else {
+                                errorText = "Не удалось собрать URL диалогов"
+                                isLoading = false
+                                return
+                            }
+
+                            let (data, _) = try await URLSession.shared.data(from: url)
+                                            let decoded = try JSONDecoder().decode(VKConversationsEnvelope.self, from: data)
+
+                                            if let error = decoded.error {
+                                                errorText = "VK error \(error.error_code): \(error.error_msg)"
+                                                isLoading = false
+                                                return
+                                            }
+
+                                            let responseItems = decoded.response?.items ?? []
+                                            loadedAllConversations.append(contentsOf: responseItems)
+
+                                            if let profiles = decoded.response?.profiles {
+                                                for profile in profiles {
+                                                    loadedProfilesById[profile.id] = profile
+                                                }
+                                            }
+
+                                            if let groups = decoded.response?.groups {
+                                                for group in groups {
+                                                    loadedGroupsById[group.id] = group
+                                                }
+                                            }
+
+                                            totalCount = decoded.response?.count ?? totalCount
+                                            offset += responseItems.count
+
+                                            if let totalCount {
+                                                hasMore = offset < totalCount && !responseItems.isEmpty
+                                            } else {
+                                                hasMore = responseItems.count == pageSize
+                                            }
             }
 
-            let profiles = decoded.response?.profiles ?? []
-            let groups = decoded.response?.groups ?? []
+            let profiles = Array(loadedProfilesById.values)
+                        let groups = Array(loadedGroupsById.values)
 
-            conversations = (decoded.response?.items ?? []).map {
+            conversations = loadedAllConversations.map {
                 mapConversation(item: $0, profiles: profiles, groups: groups)
             }
         } catch {
