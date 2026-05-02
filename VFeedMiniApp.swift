@@ -52,7 +52,17 @@ struct ManagedGroup: Identifiable, Codable, Equatable {
 
     var photoURL: URL? {
         guard let photoURLString else { return nil }
-        return URL(string: photoURLString)
+        if let url = URL(string: photoURLString) {
+                    if url.scheme == "http",
+                       var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                        components.scheme = "https"
+                        return components.url ?? url
+                    }
+                    return url
+                }
+
+                let encoded = photoURLString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+                return encoded.flatMap { URL(string: $0) }
     }
 }
 
@@ -2185,7 +2195,7 @@ struct ConversationsScreen: View {
                             }
                             .onReceive(refreshTimer) { _ in
                                 Task {
-                                    await vm.load(groupId: group.id, token: userToken, showLoading: false)
+                                    await vm.load(groupId: group.id, token: userToken, reset: true, showLoading: false)
             }
         }
     }
