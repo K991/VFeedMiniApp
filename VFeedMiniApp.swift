@@ -1354,6 +1354,36 @@ final class ChatHistoryViewModel: ObservableObject {
         }
     }
 
+    func editMessage(messageId: Int, text: String, groupId: Int, peerId: Int, token: String) async -> Bool {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return false }
+
+            guard
+                let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                let encodedMessage = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                let url = URL(string: "https://api.vk.com/method/messages.edit?group_id=\(groupId)&peer_id=\(peerId)&message_id=\(messageId)&message=\(encodedMessage)&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)")
+            else {
+                errorText = "Не удалось собрать URL редактирования"
+                return false
+            }
+
+            isSending = true
+            defer { isSending = false }
+
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                let decoded = try JSONDecoder().decode(VKBooleanEnvelope.self, from: data)
+                if let error = decoded.error {
+                    errorText = "VK error \(error.error_code): \(error.error_msg)"
+                    return false
+                }
+                return decoded.response == 1
+            } catch {
+                errorText = error.localizedDescription
+                return false
+            }
+        }
+
     
     func deleteMessage(messageId: Int, groupId: Int, token: String) async -> Bool {
         guard
@@ -2130,6 +2160,7 @@ struct ChatDetailScreen: View {
     @State private var pendingImage: UIImage?
     @State private var selectedMessage: ChatMessage?
        @State private var replyToMessage: ChatMessage?
+    @State private var editingMessage: ChatMessage?
     @State private var isSearchVisible = false
     @State private var didAutoScrollOnOpen = false
         @State private var messageSearchText = ""
@@ -2237,6 +2268,11 @@ struct ChatDetailScreen: View {
                                                             onReply: { message in
                                                                 replyToMessage = message
                                                             },
+                                                            onEdit: { message in
+                                                                                                                            editingMessage = message
+                                                                                                                            replyToMessage = nil
+                                                                                                                            draftText = message.text
+                                                                                                                        },
                                                             onDelete: { message in
                                                                 Task {
                                                                     let deleted = await vm.deleteMessage(messageId: message.id, groupId: groupId, token: userToken)
@@ -2300,6 +2336,15 @@ struct ChatDetailScreen: View {
                                 onCancel: { self.replyToMessage = nil }
                             )
                         }
+            if let editingMessage {
+                           EditPreviewBar(
+                               message: editingMessage,
+                               onCancel: {
+                                   self.editingMessage = nil
+                                   self.draftText = ""
+                               }
+                           )
+                       }
 
             MessageInputBar(
                 text: $draftText,
@@ -2319,6 +2364,14 @@ struct ChatDetailScreen: View {
                                                         messageText: text,
                                                                                                                replyToMessageId: replyToMessage?.id
                                                     )
+                                                } else if let editingMessage {
+                                                                                                    sent = await vm.editMessage(
+                                                                                                        messageId: editingMessage.id,
+                                                                                                        text: text,
+                                                                                                        groupId: groupId,
+                                                                                                        peerId: chat.id,
+                                                                                                        token: userToken
+                                                                                                    )
                                                 } else {
                                                     sent = await vm.send(text: text, groupId: groupId, peerId: chat.id, token: userToken, replyToMessageId: replyToMessage?.id)
                                                 }
@@ -2326,6 +2379,7 @@ struct ChatDetailScreen: View {
                             draftText = ""
                             self.pendingImage = nil
                             replyToMessage = nil
+                            editingMessage = nil
                             await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
                         }
                     }
@@ -3768,11 +3822,47 @@ struct ReplyPreviewBar: View {
     }
 }
 
+struct EditPreviewBar: View {
+    let message: ChatMessage
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(Color.orange)
+                .frame(width: 3, height: 36)
+                .cornerRadius(2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Редактирование сообщения")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                Text(message.text.isEmpty ? "Вложение" : message.text)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.gray)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(.systemBackground))
+    }
+}
+
 struct MessageBubbleRow: View {
     let message: ChatMessage
     let onOpenPhoto: (URL) -> Void
     let onOpenMessage: () -> Void
     let onReply: (ChatMessage) -> Void
+    let onEdit: (ChatMessage) -> Void
         let onDelete: (ChatMessage) -> Void
         @State private var showActions = false
 
@@ -3832,7 +3922,9 @@ struct MessageBubbleRow: View {
                 UIPasteboard.general.string = message.text
             }
             if message.isOutgoing {
-                Button("Редактировать") {}
+                Button("Редактировать") {
+                                    onEdit(message)
+                                }
             }
             Button("Удалить", role: .destructive) {
                            onDelete(message)
