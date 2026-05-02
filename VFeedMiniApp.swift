@@ -2068,6 +2068,7 @@ struct ChatDetailScreen: View {
     @State private var isSearchVisible = false
         @State private var messageSearchText = ""
     @State private var isAtBottom = true
+    private let bottomAnchorId = "chat-bottom-anchor"
     
 
     private let templates: [MessageTemplate] = [
@@ -2141,18 +2142,25 @@ struct ChatDetailScreen: View {
                                                     )
                                                     .id(message.id)
                                                 }
-                                                                   
+                                                    Color.clear
+                                                                                                       .frame(height: 1)
+                                                                                                       .id(bottomAnchorId)
                             }
                                                 .padding(.vertical, 12)
                                                                             .padding(.horizontal, 12)
                                                                         }
                                                                         .background(Color.gray.opacity(0.08))
+                                                                        .defaultScrollAnchor(.bottom)
                                                                         .onAppear {
                                                                             scrollToBottom(proxy: proxy, animated: false)
                                                                         }
                                                                         .onChange(of: vm.messages.count) { _ in
                                                                             scrollToBottom(proxy: proxy, animated: true)
-                                                                        }
+                                                                                .onChange(of: vm.isLoading) { isLoading in
+                                                                                                                                                           if !isLoading {
+                                                                                                                                                               scrollToBottom(proxy: proxy, animated: false)
+                                                                                                                                                           }
+                                                                                                                                                       }
 
                                             if filteredMessages.count > 20 && !isAtBottom{
                                                 Button {
@@ -2261,15 +2269,21 @@ struct ChatDetailScreen: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        guard let lastId = filteredMessages.last?.id else { return }
+        let scrollAction = {
+                    proxy.scrollTo(bottomAnchorId, anchor: .bottom)
+                }
 
         DispatchQueue.main.async {
             if animated {
                 withAnimation {
-                    proxy.scrollTo(lastId, anchor: .bottom)
+                    scrollAction()
                 }
             } else {
-                proxy.scrollTo(lastId, anchor: .bottom)
+                scrollAction()
+                            }
+
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                scrollAction()
             }
         }
     }
