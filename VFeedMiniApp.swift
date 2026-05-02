@@ -278,8 +278,19 @@ struct VKHistoryResponse: Decodable {
     let groups: [VKEntityGroup]?
 }
 
+struct VKMessageSearchEnvelope: Decodable {
+    let response: VKMessageSearchResponse?
+    let error: VKAPIError?
+}
+
+struct VKMessageSearchResponse: Decodable {
+    let count: Int?
+    let items: [VKMessage]
+}
+
 struct VKMessage: Decodable {
     let id: Int?
+    let peer_id: Int?
     let conversation_message_id: Int?
     let date: Double
     let text: String?
@@ -974,12 +985,33 @@ final class ConversationsViewModel: ObservableObject {
     @Published var conversations: [ConversationPreview] = []
     @Published var isLoading = false
     @Published var errorText: String?
-
-    private var manuallyMarkedUnreadPeerIDs = Set<Int>()
+    @Published var hasMore = true
     
-    func load(groupId: Int, token: String) async {
+    private var manuallyMarkedUnreadPeerIDs = Set<Int>()
+    private var allConversationItems: [VKConversationItem] = []
+        private var profilesById: [Int: VKProfile] = [:]
+        private var groupsById: [Int: VKEntityGroup] = [:]
+        private var currentOffset = 0
+        private let pageSize = 40
+        private var isLoadingMore = false
+        private var encodedToken: String?
+        private var currentGroupId: Int?
+    
+    func load(groupId: Int, token: String, reset: Bool = false) async {
+            let shouldReset = reset || groupId != currentGroupId
+            if shouldReset {
+                allConversationItems = []
+                profilesById = [:]
+                groupsById = [:]
+                conversations = []
+                currentOffset = 0
+                hasMore = true
+            }
+
+            if isLoadingMore || !hasMore { return }
+
         let isFirstLoad = conversations.isEmpty
-        if isFirstLoad { isLoading = true }
+        if isFirstLoad { isLoading = true } else { isLoadingMore = true }
         errorText = nil
 
         guard let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
@@ -989,59 +1021,46 @@ final class ConversationsViewModel: ObservableObject {
         }
 
         do {
-            let pageSize = 200
-                        var offset = 0
-                        var loadedAllConversations: [VKConversationItem] = []
-                        var loadedProfilesById: [Int: VKProfile] = [:]
-                        var loadedGroupsById: [Int: VKEntityGroup] = [:]
-                        var hasMore = true
-                        var totalCount: Int?
+            currentGroupId = groupId
+                        self.encodedToken = encodedToken
+                        guard let url = URL(string: "https://api.vk.com/method/messages.getConversations?group_id=\(groupId)&count=\(pageSize)&offset=\(currentOffset)&extended=1&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)") else {
+                            errorText = "Не удалось собрать URL диалогов"
+                            isLoading = false
+                            isLoadingMore = false
+                            return
+                        }
 
-                        while hasMore {
-                            guard let url = URL(string: "https://api.vk.com/method/messages.getConversations?group_id=\(groupId)&count=\(pageSize)&offset=\(offset)&extended=1&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)") else {
-                                errorText = "Не удалось собрать URL диалогов"
-                                isLoading = false
-                                return
-                            }
+            let (data, _) = try await URLSession.shared.data(from: url)
+                        let decoded = try JSONDecoder().decode(VKConversationsEnvelope.self, from: data)
 
-                            let (data, _) = try await URLSession.shared.data(from: url)
-                                            let decoded = try JSONDecoder().decode(VKConversationsEnvelope.self, from: data)
+            if let error = decoded.error {
+                            errorText = "VK error \(error.error_code): \(error.error_msg)"
+                            isLoading = false
+                            isLoadingMore = false
+                            return
+                        }
 
-                                            if let error = decoded.error {
-                                                errorText = "VK error \(error.error_code): \(error.error_msg)"
-                                                isLoading = false
-                                                return
-                                            }
+            let responseItems = decoded.response?.items ?? []
+                        allConversationItems.append(contentsOf: responseItems)
 
-                                            let responseItems = decoded.response?.items ?? []
-                                            loadedAllConversations.append(contentsOf: responseItems)
+            if let profiles = decoded.response?.profiles {
+                            for profile in profiles { profilesById[profile.id] = profile }
+                        }
+                        if let groups = decoded.response?.groups {
+                            for group in groups { groupsById[group.id] = group }
+                        }
 
-                                            if let profiles = decoded.response?.profiles {
-                                                for profile in profiles {
-                                                    loadedProfilesById[profile.id] = profile
-                                                }
-                                            }
-
-                                            if let groups = decoded.response?.groups {
-                                                for group in groups {
-                                                    loadedGroupsById[group.id] = group
-                                                }
-                                            }
-
-                                            totalCount = decoded.response?.count ?? totalCount
-                                            offset += responseItems.count
-
-                                            if let totalCount {
-                                                hasMore = offset < totalCount && !responseItems.isEmpty
-                                            } else {
-                                                hasMore = responseItems.count == pageSize
-                                            }
+            currentOffset += responseItems.count
+                        if let totalCount = decoded.response?.count {
+                            hasMore = currentOffset < totalCount && !responseItems.isEmpty
+                        } else {
+                            hasMore = responseItems.count == pageSize
             }
 
-            let profiles = Array(loadedProfilesById.values)
-                        let groups = Array(loadedGroupsById.values)
+            let profiles = Array(profilesById.values)
+                        let groups = Array(groupsById.values)
 
-            conversations = loadedAllConversations.map {
+            conversations = allConversationItems.map {
                 mapConversation(item: $0, profiles: profiles, groups: groups)
             }
         } catch {
@@ -1051,7 +1070,30 @@ final class ConversationsViewModel: ObservableObject {
         }
 
         isLoading = false
-    }
+        isLoadingMore = false
+            }
+
+            func searchConversationIDsByMessage(groupId: Int, token: String, query: String) async -> Set<Int> {
+                let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty,
+                      let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                      let encodedQuery = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                      let url = URL(string: "https://api.vk.com/method/messages.search?group_id=\(groupId)&q=\(encodedQuery)&count=100&access_token=\(encodedToken)&v=\(AppConfig.apiVersion)") else {
+                    return []
+                }
+
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: url)
+                    let decoded = try JSONDecoder().decode(VKMessageSearchEnvelope.self, from: data)
+                    if let error = decoded.error {
+                        errorText = "VK error \(error.error_code): \(error.error_msg)"
+                        return []
+                    }
+                    return Set((decoded.response?.items ?? []).compactMap { $0.peer_id })
+                } catch {
+                    return []
+                }
+            }
 
     func markAsRead(groupId: Int, peerId: Int, token: String) async {
         manuallyMarkedUnreadPeerIDs.remove(peerId)
@@ -2008,9 +2050,8 @@ struct ConversationsScreen: View {
     @StateObject private var vm = ConversationsViewModel()
     @State private var path = NavigationPath()
     @State private var searchText = ""
-   @State private var filterOption: ConversationsFilterOption = .all
-
-    let refreshTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+    @State private var filterOption: ConversationsFilterOption = .all
+        @State private var serverSearchPeerIDs: Set<Int> = []
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -2068,6 +2109,13 @@ struct ConversationsScreen: View {
                         NavigationLink(value: chat) {
                             ConversationRow(chat: chat)
                         }
+                        .onAppear {
+                                                    if chat.id == filteredConversations.last?.id {
+                                                        Task {
+                                                            await vm.load(groupId: group.id, token: userToken)
+                                                        }
+                                                    }
+                                                }
                         .contextMenu {
                             Button{
                                                        Task {
@@ -2113,12 +2161,16 @@ struct ConversationsScreen: View {
             }
         }
         .task {
-            await vm.load(groupId: group.id, token: userToken)
+            await vm.load(groupId: group.id, token: userToken, reset: true)
         }
-        .onReceive(refreshTimer) { _ in
-            guard path.isEmpty else { return }
+        .onChange(of: searchText) { newValue in
+                    let query = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
             Task {
-                await vm.load(groupId: group.id, token: userToken)
+                if query.isEmpty {
+                                    serverSearchPeerIDs = []
+                                } else {
+                                    serverSearchPeerIDs = await vm.searchConversationIDsByMessage(groupId: group.id, token: userToken, query: query)
+                                }
             }
         }
     }
@@ -2127,9 +2179,12 @@ struct ConversationsScreen: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return vm.conversations.filter { conversation in
-                    let matchesQuery = query.isEmpty ||
-                    conversation.title.localizedCaseInsensitiveContains(query) ||
+            let localMatch = conversation.title.localizedCaseInsensitiveContains(query) ||
                     conversation.subtitle.localizedCaseInsensitiveContains(query)
+            let serverMatch = serverSearchPeerIDs.contains(conversation.id)
+                                let matchesQuery = query.isEmpty ||
+                                localMatch ||
+                                serverMatch
 
                     let matchesFilter: Bool
                     switch filterOption {
