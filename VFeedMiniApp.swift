@@ -2272,6 +2272,7 @@ struct ChatDetailScreen: View {
     @State private var showTemplates = false
     @State private var pendingImage: UIImage?
     @State private var selectedDocument: DocumentAttachmentPreview?
+    @State private var selectedMessageText: SelectableMessageText?
        @State private var replyToMessage: ChatMessage?
     @State private var editingMessage: ChatMessage?
     @State private var isSearchVisible = false
@@ -2316,7 +2317,7 @@ struct ChatDetailScreen: View {
                 )
     ]
 
-    let refreshTimer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+    private let refreshIntervalNanoseconds: UInt64 = 4_000_000_000
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2378,6 +2379,9 @@ struct ChatDetailScreen: View {
                                                             onOpenDocument: { title, url in
                                                             selectedDocument = DocumentAttachmentPreview(title: title, url: url)
                                                             },
+                                                            onSelectText: { text in
+                                                                                                                            selectedMessageText = SelectableMessageText(text: text)
+                                                                                                                        },
                                                             onReply: { message in
                                                                 replyToMessage = message
                                                             },
@@ -2522,12 +2526,13 @@ struct ChatDetailScreen: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .task {
+        .task(id: chat.id) {
             await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
-        }
-        .onReceive(refreshTimer) { _ in
-            Task {
-                await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
+        
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: refreshIntervalNanoseconds)
+                guard !Task.isCancelled else { return }
+                await vm.load(groupId: groupId, peerId: chat.id, token: userToken, force: true, showLoading: false)
             }
         }
         .fullScreenCover(item: $fullscreenPhoto) { item in
@@ -2540,6 +2545,9 @@ struct ChatDetailScreen: View {
         }
         .sheet(item: $selectedDocument) { document in
                     DocumentPreviewScreen(document: document)
+                }
+        .sheet(item: $selectedMessageText) { item in
+                    MessageTextSelectionScreen(text: item.text)
                 }
     }
 
@@ -4002,6 +4010,7 @@ struct MessageBubbleRow: View {
     let message: ChatMessage
     let onOpenPhoto: (URL) -> Void
     let onOpenDocument: (String, URL) -> Void
+    let onSelectText: (String) -> Void
     let onReply: (ChatMessage) -> Void
     let onEdit: (ChatMessage) -> Void
         let onDelete: (ChatMessage) -> Void
@@ -4060,6 +4069,9 @@ struct MessageBubbleRow: View {
                     .foregroundColor(.secondary)
             }
             .contentShape(Rectangle())
+            .onTapGesture {
+                            openMessageTextSelection()
+                        }
                         .onLongPressGesture {
                             copyMessageTextWithHighlight()
                         }
@@ -4114,9 +4126,10 @@ struct MessageBubbleRow: View {
         }
 
         private func copyMessageTextWithHighlight() {
-            guard !message.text.isEmpty else { return }
+            let text = fullCopyText
+                        guard !text.isEmpty else { return }
 
-            UIPasteboard.general.string = message.text
+            UIPasteboard.general.string = text
 
             withAnimation(.easeInOut(duration: 0.15)) {
                 isCopyHighlighted = true
@@ -4128,6 +4141,31 @@ struct MessageBubbleRow: View {
                 }
             }
         }
+    
+    private func openMessageTextSelection() {
+        let text = fullCopyText
+        guard !text.isEmpty else { return }
+        onSelectText(text)
+    }
+
+    private var fullCopyText: String {
+        var parts: [String] = []
+        if !message.text.isEmpty {
+            parts.append(message.text)
+        }
+        parts.append(contentsOf: message.forwardedMessages.compactMap { forwardedMessageCopyText($0) })
+        return parts.joined(separator: "\n\n")
+    }
+
+    private func forwardedMessageCopyText(_ forwardedMessage: ForwardedChatMessage) -> String? {
+        var parts: [String] = []
+        if !forwardedMessage.text.isEmpty {
+            parts.append(forwardedMessage.text)
+        }
+        parts.append(contentsOf: forwardedMessage.forwardedMessages.compactMap { forwardedMessageCopyText($0) })
+        let text = parts.joined(separator: "\n\n")
+        return text.isEmpty ? nil : text
+    }
     
     private func forwardedMessageView(_ forwardedMessage: ForwardedChatMessage) -> AnyView {
         AnyView(VStack(alignment: .leading, spacing: 6) {
@@ -4265,9 +4303,65 @@ struct MessageBubbleRow: View {
     }
 }
 
+struct SelectableMessageText: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
+struct MessageTextSelectionScreen: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var didCopy = false
+
+    var body: some View {
+        NavigationView {
+            SelectableTextView(text: text)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .navigationTitle("Выбор текста")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button(didCopy ? "Скопировано" : "Копировать всё") {
+                            UIPasteboard.general.string = text
+                            didCopy = true
+                        }
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Закрыть") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+    }
+}
+
+struct SelectableTextView: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = true
+        textView.backgroundColor = .clear
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        uiView.text = text
+    }
+}
+
 struct DocumentPreviewScreen: View {
     let document: DocumentAttachmentPreview
     @Environment(\.dismiss) private var dismiss
+    @State private var didCopy = false
 
     var body: some View {
         NavigationView {
@@ -4275,6 +4369,12 @@ struct DocumentPreviewScreen: View {
                             .navigationTitle(document.title)
                             .navigationBarTitleDisplayMode(.inline)
                             .toolbar {
+                                ToolbarItem(placement: .navigationBarLeading) {
+                                                                    Button(didCopy ? "Скопировано" : "Копировать всё") {
+                                                                        UIPasteboard.general.string = "\(document.title)\n\(document.url.absoluteString)"
+                                                                        didCopy = true
+                                                                    }
+                                                                }
                                 ToolbarItem(placement: .navigationBarTrailing) {
                                     Button("Закрыть") {
                                         dismiss()
