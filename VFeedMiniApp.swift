@@ -315,7 +315,8 @@ struct VKMessage: Decodable {
     let out: Int?
     let attachments: [VKAttachment]?
     let reply_message: VKReplyMessage?
-    }
+    let fwd_messages: [VKMessage]?
+}
 
     struct VKReplyMessage: Decodable {
         let text: String?
@@ -385,6 +386,14 @@ enum MessageAttachment: Hashable {
     case doc(title: String, ext: String, size: Int, url: URL?)
 }
 
+struct ForwardedChatMessage: Identifiable {
+    let id: Int
+    let text: String
+    let senderName: String
+    let attachments: [MessageAttachment]
+    let forwardedMessages: [ForwardedChatMessage]
+}
+
 struct ChatMessage: Identifiable {
     let id: Int
     let text: String
@@ -394,6 +403,7 @@ struct ChatMessage: Identifiable {
     let avatarURL: URL?
     let attachments: [MessageAttachment]
     let replyPreviewText: String?
+    let forwardedMessages: [ForwardedChatMessage]
 }
 
 // MARK: - User Info API
@@ -1013,7 +1023,7 @@ final class ConversationsViewModel: ObservableObject {
         private var isLoadingMore = false
         private var encodedToken: String?
         private var currentGroupId: Int?
-    
+
     func load(groupId: Int, token: String, reset: Bool = false, showLoading: Bool = true) async {
             let shouldReset = reset || groupId != currentGroupId
             if shouldReset {
@@ -1294,11 +1304,12 @@ final class ChatHistoryViewModel: ObservableObject {
     @Published var isSending = false
     @Published var errorText: String?
 
-    func load(groupId: Int, peerId: Int, token: String) async {
-        guard !isLoading else { return }
+    func load(groupId: Int, peerId: Int, token: String, force: Bool = false) async {
+            guard force || !isLoading else { return }
 
         isLoading = true
         errorText = nil
+        defer { isLoading = false }
 
         do {
             let primary = try await fetchHistory(groupId: groupId, peerId: peerId, token: token, includeGroupId: true)
@@ -1309,40 +1320,11 @@ final class ChatHistoryViewModel: ObservableObject {
             let history = fallback ?? primary
 
             messages = history.items.reversed().map { item in
-                let fromId = item.from_id ?? 0
-
-                let avatarURL: URL? = {
-                    if fromId > 0 {
-                        return history.profiles
-                                                    .first(where: { $0.id == fromId })?
-                                                    .photo_100
-                                                    .flatMap(URL.init(string:))
-                    } else {
-                        return history.groups
-                                                    .first(where: { $0.id == abs(fromId) })?
-                                                    .photo_100
-                                                    .flatMap(URL.init(string:))
-                    }
-                }()
-
-                let messageId = item.id ?? item.conversation_message_id ?? Int(item.date * 1000)
-                
-                return ChatMessage(
-                    id: messageId,
-                    text: normalized(item.text),
-                    timeText: formatTime(item.date),
-                    isOutgoing: (item.out ?? 0) == 1,
-                    senderName: senderName(fromId: fromId, profiles: history.profiles, groups: history.groups),
-                    avatarURL: avatarURL,
-                    attachments: parseAttachments(item.attachments),
-                    replyPreviewText: normalizedReplyText(item.reply_message?.text, attachments: item.reply_message?.attachments)
-                )
+                mapMessage(item, profiles: history.profiles, groups: history.groups)
             }
         } catch {
             errorText = error.localizedDescription
         }
-
-        isLoading = false
     }
 
     private func fetchHistory(groupId: Int, peerId: Int, token: String, includeGroupId: Bool) async throws -> (items: [VKMessage], profiles: [VKProfile], groups: [VKEntityGroup]) {
@@ -1376,6 +1358,53 @@ final class ChatHistoryViewModel: ObservableObject {
                 profiles: decoded.response?.profiles ?? [],
                 groups: decoded.response?.groups ?? []
             )
+        }
+
+    private func mapMessage(_ item: VKMessage, profiles: [VKProfile], groups: [VKEntityGroup]) -> ChatMessage {
+            let fromId = item.from_id ?? 0
+            let avatarURL = avatarURL(fromId: fromId, profiles: profiles, groups: groups)
+            let messageId = item.id ?? item.conversation_message_id ?? Int(item.date * 1000)
+
+            return ChatMessage(
+                id: messageId,
+                text: normalized(item.text),
+                timeText: formatTime(item.date),
+                isOutgoing: (item.out ?? 0) == 1,
+                senderName: senderName(fromId: fromId, profiles: profiles, groups: groups),
+                avatarURL: avatarURL,
+                attachments: parseAttachments(item.attachments),
+                replyPreviewText: normalizedReplyText(item.reply_message?.text, attachments: item.reply_message?.attachments),
+                forwardedMessages: mapForwardedMessages(item.fwd_messages, profiles: profiles, groups: groups)
+            )
+        }
+
+        private func mapForwardedMessages(_ items: [VKMessage]?, profiles: [VKProfile], groups: [VKEntityGroup]) -> [ForwardedChatMessage] {
+            guard let items else { return [] }
+
+            return items.enumerated().map { index, item in
+                let fromId = item.from_id ?? 0
+                return ForwardedChatMessage(
+                    id: item.id ?? item.conversation_message_id ?? Int(item.date * 1000) + index,
+                    text: normalized(item.text),
+                    senderName: senderName(fromId: fromId, profiles: profiles, groups: groups),
+                    attachments: parseAttachments(item.attachments),
+                    forwardedMessages: mapForwardedMessages(item.fwd_messages, profiles: profiles, groups: groups)
+                )
+            }
+        }
+
+        private func avatarURL(fromId: Int, profiles: [VKProfile], groups: [VKEntityGroup]) -> URL? {
+            if fromId > 0 {
+                return profiles
+                    .first(where: { $0.id == fromId })?
+                    .photo_100
+                    .flatMap(URL.init(string:))
+            }
+
+            return groups
+                .first(where: { $0.id == abs(fromId) })?
+                .photo_100
+                .flatMap(URL.init(string:))
         }
 
     private func normalizedReplyText(_ text: String?, attachments: [VKAttachment]?) -> String? {
@@ -2317,7 +2346,7 @@ struct ChatDetailScreen: View {
                         .padding(.horizontal, 24)
                     Button("Повторить") {
                         Task {
-                            await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
+                            await vm.load(groupId: groupId, peerId: chat.id, token: userToken, force: true)
                         }
                     }
                     Spacer()
@@ -2383,7 +2412,11 @@ struct ChatDetailScreen: View {
                                                                                          didAutoScrollOnOpen = true
                                                                                        scrollToBottom(proxy: proxy, animated: false)
                                                                                    }
-
+                                                                                   .onChange(of: filteredMessages.last?.id) { _ in
+                                                                                                                                                                          guard isAtBottom else { return }
+                                                                                                                                                                          scrollToBottom(proxy: proxy, animated: true)
+                                                                                                                                                                      }
+                        
                                                                                    if filteredMessages.count > 20 && !isAtBottom {
                                                                                        Button {
                                                                                            scrollToBottom(proxy: proxy, animated: true)
@@ -2464,7 +2497,9 @@ struct ChatDetailScreen: View {
                             self.pendingImage = nil
                             replyToMessage = nil
                             editingMessage = nil
-                            await vm.load(groupId: groupId, peerId: chat.id, token: userToken)
+                            await vm.load(groupId: groupId, peerId: chat.id, token: userToken, force: true)
+                                                        try? await Task.sleep(nanoseconds: 700_000_000)
+                                                        await vm.load(groupId: groupId, peerId: chat.id, token: userToken, force: true)
                         }
                     }
                 },
@@ -3565,6 +3600,28 @@ struct WallSearchBar: View {
     }
 }
 
+func makeAttributedMessageText(_ text: String, isOutgoing: Bool) -> AttributedString {
+    var attributed = AttributedString(text)
+    attributed.foregroundColor = isOutgoing ? .white : .primary
+
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+        return attributed
+    }
+
+    let nsText = text as NSString
+    let matches = detector.matches(in: text, options: [], range: NSRange(location: 0, length: nsText.length))
+
+    for match in matches {
+        guard let range = Range(match.range, in: attributed),
+              let url = match.url else { continue }
+        attributed[range].link = url
+        attributed[range].foregroundColor = isOutgoing ? .white : .blue
+        attributed[range].underlineStyle = .single
+    }
+
+    return attributed
+}
+
 func makeAttributedPostText(_ text: String) -> AttributedString {
     var attributed = AttributedString(text)
 
@@ -3967,17 +4024,20 @@ struct MessageBubbleRow: View {
                                     }
 
                     if !message.text.isEmpty {
-                        Text(message.text)
+                        Text(makeAttributedMessageText(message.text, isOutgoing: message.isOutgoing))
                             .font(.system(size: 15))
-                            .foregroundColor(message.isOutgoing ? .white : .primary)
-                        .textSelection(.enabled)
+                            .textSelection(.enabled)
                     }
 
                     ForEach(Array(message.attachments.enumerated()), id: \.offset) { item in
                         attachmentView(item.element)
                     }
 
-                    if message.text.isEmpty && message.attachments.isEmpty {
+                    ForEach(message.forwardedMessages) { forwardedMessage in
+                                            forwardedMessageView(forwardedMessage)
+                                        }
+
+                                        if message.text.isEmpty && message.attachments.isEmpty && message.forwardedMessages.isEmpty {
                         Text("Пустое сообщение")
                             .font(.system(size: 15))
                             .foregroundColor(message.isOutgoing ? .white : .primary)
@@ -4069,6 +4129,44 @@ struct MessageBubbleRow: View {
             }
         }
     
+    private func forwardedMessageView(_ forwardedMessage: ForwardedChatMessage) -> some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Пересланное сообщение")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+
+                Text(forwardedMessage.senderName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(message.isOutgoing ? .white : .blue)
+
+                if !forwardedMessage.text.isEmpty {
+                    Text(makeAttributedMessageText(forwardedMessage.text, isOutgoing: message.isOutgoing))
+                        .font(.system(size: 14))
+                        .textSelection(.enabled)
+                }
+
+                ForEach(Array(forwardedMessage.attachments.enumerated()), id: \.offset) { item in
+                    attachmentView(item.element)
+                }
+
+                ForEach(forwardedMessage.forwardedMessages) { nestedForwardedMessage in
+                    forwardedMessageView(nestedForwardedMessage)
+                }
+
+                if forwardedMessage.text.isEmpty && forwardedMessage.attachments.isEmpty && forwardedMessage.forwardedMessages.isEmpty {
+                    Text("Вложение или пустое сообщение")
+                        .font(.system(size: 14))
+                        .foregroundColor(message.isOutgoing ? .white : .primary)
+                }
+            }
+            .padding(.leading, 10)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(message.isOutgoing ? Color.white.opacity(0.45) : Color.blue.opacity(0.45))
+                    .frame(width: 3)
+            }
+        }
+
     @ViewBuilder
     private func attachmentView(_ attachment: MessageAttachment) -> some View {
         switch attachment {
