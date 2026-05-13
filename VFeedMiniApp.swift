@@ -1304,12 +1304,18 @@ final class ChatHistoryViewModel: ObservableObject {
     @Published var isSending = false
     @Published var errorText: String?
 
-    func load(groupId: Int, peerId: Int, token: String, force: Bool = false) async {
+    func load(groupId: Int, peerId: Int, token: String, force: Bool = false, showLoading: Bool = true) async {
             guard force || !isLoading else { return }
 
-        isLoading = true
+        if showLoading {
+                    isLoading = true
+                }
         errorText = nil
-        defer { isLoading = false }
+        defer {
+                    if showLoading {
+                        isLoading = false
+                    }
+                }
 
         do {
             let primary = try await fetchHistory(groupId: groupId, peerId: peerId, token: token, includeGroupId: true)
