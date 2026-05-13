@@ -3,6 +3,7 @@ import UIKit
 import Combine
 import WebKit
 import PhotosUI
+import SafariServices
 
 @main
 struct VFeedMiniApp: App {
@@ -76,6 +77,12 @@ enum RootTab: String, Codable {
 
 struct FullscreenPhoto: Identifiable {
     let id = UUID()
+    let url: URL
+}
+
+struct DocumentAttachmentPreview: Identifiable {
+    let id = UUID()
+    let title: String
     let url: URL
 }
 
@@ -2235,7 +2242,7 @@ struct ChatDetailScreen: View {
     @State private var showPhotoPicker = false
     @State private var showTemplates = false
     @State private var pendingImage: UIImage?
-    @State private var selectedMessage: ChatMessage?
+    @State private var selectedDocument: DocumentAttachmentPreview?
        @State private var replyToMessage: ChatMessage?
     @State private var editingMessage: ChatMessage?
     @State private var isSearchVisible = false
@@ -2339,8 +2346,8 @@ struct ChatDetailScreen: View {
                                                             onOpenPhoto: { url in
                                                                 fullscreenPhoto = FullscreenPhoto(url: url)
                                                             },
-                                                            onOpenMessage: {
-                                                                selectedMessage = message
+                                                            onOpenDocument: { title, url in
+                                                            selectedDocument = DocumentAttachmentPreview(title: title, url: url)
                                                             },
                                                             onReply: { message in
                                                                 replyToMessage = message
@@ -2496,8 +2503,8 @@ struct ChatDetailScreen: View {
                 pendingImage = image
             }
         }
-        .sheet(item: $selectedMessage) { message in
-                    MessageTextSelectionScreen(message: message)
+        .sheet(item: $selectedDocument) { document in
+                    DocumentPreviewScreen(document: document)
                 }
     }
 
@@ -3937,12 +3944,13 @@ struct EditPreviewBar: View {
 struct MessageBubbleRow: View {
     let message: ChatMessage
     let onOpenPhoto: (URL) -> Void
-    let onOpenMessage: () -> Void
+    let onOpenDocument: (String, URL) -> Void
     let onReply: (ChatMessage) -> Void
     let onEdit: (ChatMessage) -> Void
         let onDelete: (ChatMessage) -> Void
         @State private var showActions = false
-
+    @State private var isCopyHighlighted = false
+    
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             if message.isOutgoing {
@@ -3962,6 +3970,7 @@ struct MessageBubbleRow: View {
                         Text(message.text)
                             .font(.system(size: 15))
                             .foregroundColor(message.isOutgoing ? .white : .primary)
+                        .textSelection(.enabled)
                     }
 
                     ForEach(Array(message.attachments.enumerated()), id: \.offset) { item in
@@ -3975,16 +3984,25 @@ struct MessageBubbleRow: View {
                     }
                 }
                 .padding(12)
-                .background(message.isOutgoing ? Color.blue : Color.white)
+                .background(
+                                    isCopyHighlighted
+                                        ? (message.isOutgoing ? Color.blue.opacity(0.82) : Color.yellow.opacity(0.22))
+                                        : (message.isOutgoing ? Color.blue : Color.white)
+                                )
                 .cornerRadius(14)
-
+                .overlay(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .stroke(isCopyHighlighted ? Color.yellow.opacity(0.95) : Color.clear, lineWidth: 2)
+                                )
+                
                 Text(messageMetaText)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
-            .onTapGesture {
-                           onOpenMessage()
-                       }
+            .contentShape(Rectangle())
+                        .onLongPressGesture {
+                            copyMessageTextWithHighlight()
+                        }
 
             if !message.isOutgoing {
                 messageActionsButton
@@ -3996,7 +4014,7 @@ struct MessageBubbleRow: View {
                             onReply(message)
                         }
             Button("Копировать текст") {
-                UIPasteboard.general.string = message.text
+                copyMessageTextWithHighlight()
             }
             if message.isOutgoing {
                 Button("Редактировать") {
@@ -4027,6 +4045,30 @@ struct MessageBubbleRow: View {
             .buttonStyle(.plain)
         }
 
+    private var messageBackgroundColor: Color {
+            if isCopyHighlighted {
+                return message.isOutgoing ? Color.blue.opacity(0.82) : Color.yellow.opacity(0.22)
+            }
+
+            return message.isOutgoing ? Color.blue : Color.white
+        }
+
+        private func copyMessageTextWithHighlight() {
+            guard !message.text.isEmpty else { return }
+
+            UIPasteboard.general.string = message.text
+
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isCopyHighlighted = true
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isCopyHighlighted = false
+                }
+            }
+        }
+    
     @ViewBuilder
     private func attachmentView(_ attachment: MessageAttachment) -> some View {
         switch attachment {
@@ -4064,7 +4106,12 @@ struct MessageBubbleRow: View {
             }
             .buttonStyle(.plain)
 
-        case .doc(let title, let ext, let size, _):
+        case .doc(let title, let ext, let size, let url):
+                    Button {
+                        if let url {
+                            onOpenDocument(title, url)
+                        }
+                    } label: {
             HStack(spacing: 10) {
                 Image(systemName: "doc.fill")
                     .font(.system(size: 28))
@@ -4086,6 +4133,9 @@ struct MessageBubbleRow: View {
             .padding(10)
             .background(message.isOutgoing ? Color.white.opacity(0.15) : Color.gray.opacity(0.12))
             .cornerRadius(10)
+                    }
+                                .buttonStyle(.plain)
+                                .disabled(url == nil)
         }
     }
 
@@ -4117,30 +4167,34 @@ struct MessageBubbleRow: View {
     }
 }
 
-struct MessageTextSelectionScreen: View {
-    let message: ChatMessage
+struct DocumentPreviewScreen: View {
+    let document: DocumentAttachmentPreview
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationView {
-            ScrollView {
-                Text(message.text.isEmpty ? "Нет текста в сообщении" : message.text)
-                    .font(.system(size: 17))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-                    .textSelection(.enabled)
-            }
-            .navigationTitle("Сообщение")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Закрыть") {
-                        dismiss()
+            SafariView(url: document.url)
+                            .navigationTitle(document.title)
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .navigationBarTrailing) {
+                                    Button("Закрыть") {
+                                        dismiss()
+                                    }
                     }
                 }
-            }
         }
     }
+}
+
+struct SafariView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        SFSafariViewController(url: url)
+    }
+
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
 
 struct PhotoPicker: UIViewControllerRepresentable {
