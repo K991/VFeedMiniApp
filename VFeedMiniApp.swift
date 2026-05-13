@@ -4129,43 +4129,43 @@ struct MessageBubbleRow: View {
             }
         }
     
-    private func forwardedMessageView(_ forwardedMessage: ForwardedChatMessage) -> some View {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Пересланное сообщение")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(message.isOutgoing ? .white.opacity(0.82) : .secondary)
-
-                Text(forwardedMessage.senderName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(message.isOutgoing ? .white : .blue)
-
-                if !forwardedMessage.text.isEmpty {
-                    Text(makeAttributedMessageText(forwardedMessage.text, isOutgoing: message.isOutgoing))
-                        .font(.system(size: 14))
-                        .textSelection(.enabled)
-                }
-
-                ForEach(Array(forwardedMessage.attachments.enumerated()), id: \.offset) { item in
-                    attachmentView(item.element)
-                }
-
-                ForEach(forwardedMessage.forwardedMessages) { nestedForwardedMessage in
-                    forwardedMessageView(nestedForwardedMessage)
-                }
-
-                if forwardedMessage.text.isEmpty && forwardedMessage.attachments.isEmpty && forwardedMessage.forwardedMessages.isEmpty {
-                    Text("Вложение или пустое сообщение")
-                        .font(.system(size: 14))
-                        .foregroundColor(message.isOutgoing ? .white : .primary)
-                }
+    private func forwardedMessageView(_ forwardedMessage: ForwardedChatMessage) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 6) {
+            Text("Пересланное сообщение")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(message.isOutgoing ? .white.opacity(0.82) : .secondary)
+            
+            Text(forwardedMessage.senderName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(message.isOutgoing ? .white : .blue)
+            
+            if !forwardedMessage.text.isEmpty {
+                Text(makeAttributedMessageText(forwardedMessage.text, isOutgoing: message.isOutgoing))
+                    .font(.system(size: 14))
+                    .textSelection(.enabled)
             }
+            
+            ForEach(Array(forwardedMessage.attachments.enumerated()), id: \.offset) { item in
+                attachmentView(item.element)
+            }
+            
+            ForEach(forwardedMessage.forwardedMessages) { nestedForwardedMessage in
+                forwardedMessageView(nestedForwardedMessage)
+            }
+            
+            if forwardedMessage.text.isEmpty && forwardedMessage.attachments.isEmpty && forwardedMessage.forwardedMessages.isEmpty {
+                Text("Вложение или пустое сообщение")
+                    .font(.system(size: 14))
+                    .foregroundColor(message.isOutgoing ? .white : .primary)
+            }
+        }
             .padding(.leading, 10)
             .overlay(alignment: .leading) {
                 Rectangle()
                     .fill(message.isOutgoing ? Color.white.opacity(0.45) : Color.blue.opacity(0.45))
                     .frame(width: 3)
-            }
-        }
+            })
+    }
 
     @ViewBuilder
     private func attachmentView(_ attachment: MessageAttachment) -> some View {
